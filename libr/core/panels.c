@@ -2103,13 +2103,7 @@ static bool initPanels(RCore *core, RPanels *panels) {
 	panels->n_panels = 0;
 	addPanelFrame (core, panels, PANEL_TITLE_DISASSEMBLY, PANEL_CMD_DISASSEMBLY);
 
-	RAnalFunction *fun = r_anal_get_fcn_in (core->anal, core->offset, R_ANAL_FCN_TYPE_NULL);
-	if (fun && !r_list_empty (fun->bbs)) {
-		addPanelFrame (core, panels, PANEL_TITLE_PSEUDO, PANEL_CMD_PSEUDO);
-	}
-
 	if (panels->layout == PANEL_LAYOUT_DEFAULT_DYNAMIC) {
-		// addPanelFrame (core, panels, PANEL_TITLE_STACK, PANEL_CMD_STACK);
 		addPanelFrame (core, panels, PANEL_TITLE_STACKREFS, PANEL_CMD_STACKREFS);
 		addPanelFrame (core, panels, PANEL_TITLE_REGISTERS, PANEL_CMD_REGISTERS);
 		addPanelFrame (core, panels, PANEL_TITLE_REGISTERREFS, PANEL_CMD_REGISTERREFS);
