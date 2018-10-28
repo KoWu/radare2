@@ -385,12 +385,12 @@ static void panelAllClear(RPanels *panels) {
 R_API void r_core_panels_layout (RPanels *panels) {
 	panels->can->sx = 0;
 	panels->can->sy = 0;
-	layoutDefault (panels);
+	layoutDefault(panels);
 }
 
 static void layoutDefault(RPanels *panels) {
 	int h, w = r_cons_get_size (&h);
-	int ph = (h - 1) / (panels->n_panels - 2);
+	int ph = (h - 1) / (panels->n_panels - 1);
 	int i;
 	int colpos = w - panels->columnWidth;
 	RPanel *panel = panels->panel;
@@ -401,15 +401,11 @@ static void layoutDefault(RPanels *panels) {
 		panel[0].pos.h = h - 1;
 		return;
 	}
-	panel[0].pos.w = colpos / 2 + 1;
+	panel[0].pos.w = colpos + 1;
 	panel[0].pos.h = h - 1;
-	panel[1].pos.x = colpos / 2;
-	panel[1].pos.y = 1;
-	panel[1].pos.w = colpos / 2 + 1;
-	panel[1].pos.h = h - 1;
-	for (i = 2; i < panels->n_panels; i++) {
+	for (i = 1; i < panels->n_panels; i++) {
 		panel[i].pos.x = colpos;
-		panel[i].pos.y = 2 + (ph * (i - 2));
+		panel[i].pos.y = 2 + (ph * (i - 1));
 		panel[i].pos.w = w - colpos;
 		if (panel[i].pos.w < 0) {
 			panel[i].pos.w = 0;
@@ -2113,7 +2109,7 @@ static bool initPanels(RCore *core, RPanels *panels) {
 	}
 
 	if (panels->layout == PANEL_LAYOUT_DEFAULT_DYNAMIC) {
-		addPanelFrame (core, panels, PANEL_TITLE_STACK, PANEL_CMD_STACK);
+		// addPanelFrame (core, panels, PANEL_TITLE_STACK, PANEL_CMD_STACK);
 		addPanelFrame (core, panels, PANEL_TITLE_STACKREFS, PANEL_CMD_STACKREFS);
 		addPanelFrame (core, panels, PANEL_TITLE_REGISTERS, PANEL_CMD_REGISTERS);
 		addPanelFrame (core, panels, PANEL_TITLE_REGISTERREFS, PANEL_CMD_REGISTERREFS);
@@ -3166,6 +3162,9 @@ repeat:
 			key = r_core_cmd0 (core, cmd);
 		} else {
 			panelSingleStepIn (core);
+            if (!strcmp (panels->panel[panels->curnode].cmd, PANEL_CMD_DISASSEMBLY)) {
+                panels->panel[panels->curnode].addr = core->offset;
+            }
 			setRefreshAll (panels);
 		}
 		break;
@@ -3175,6 +3174,9 @@ repeat:
 			key = r_core_cmd0 (core, cmd);
 		} else {
 			panelSingleStepOver (core);
+            if (!strcmp (panels->panel[panels->curnode].cmd, PANEL_CMD_DISASSEMBLY)) {
+                panels->panel[panels->curnode].addr = core->offset;
+            }
 			setRefreshAll (panels);
 		}
 		break;
