@@ -256,8 +256,7 @@ void file_delmagic(struct r_magic *p, int type, size_t entries) {
 		p--;
 		/*FALLTHROUGH*/
 	case 0:
-		free (p);
-		p = NULL;
+		R_FREE (p);
 		break;
 	default:
 		abort ();
@@ -307,8 +306,7 @@ struct mlist * file_apprentice(RMagic *ms, const char *fn, int action) {
 	}
 	if (errs == -1) {
 		free (mfn);
-		free (mlist);
-		mlist = NULL;
+		R_FREE (mlist);
 		file_error (ms, 0, "could not find any magic files!");
 		return NULL;
 	}
@@ -953,8 +951,7 @@ static int parse(RMagic *ms, struct r_magic_entry **mentryp, ut32 *nmentryp, con
 				file_oomem (ms, sizeof (*mp) * maxmagic);
 				return -1;
 			}
-			ut8 *p = (ut8*)&mp + *nmentryp;
-			(void)memset(p, 0, sizeof (*mp) * ALLOC_INCR);
+			(void)memset(&mp[*nmentryp], 0, sizeof (*mp) * ALLOC_INCR);
 			*mentryp = mp;
 		}
 		me = &(*mentryp)[*nmentryp];
@@ -1252,9 +1249,7 @@ static int parse(RMagic *ms, struct r_magic_entry **mentryp, ut32 *nmentryp, con
 		++l;
 		m->flag |= NOSPACE;
 	}
-	for (i = 0; (m->desc[i++] = *l++) != '\0' && i < sizeof (m->desc);) {
-		continue;
-	}
+	for (i = 0; (m->desc[i++] = *l++) != '\0' && i < sizeof (m->desc);) {}
 	if (i == sizeof (m->desc)) {
 		m->desc[sizeof (m->desc) - 1] = '\0';
 		if (ms->flags & R_MAGIC_CHECK) {
@@ -1308,9 +1303,7 @@ static int parse_mime(RMagic *ms, struct r_magic_entry **mentryp, ut32 *nmentryp
 	EATAB;
 	for (i = 0;
 		*l && ((isascii ((ut8)*l) && isalnum ((ut8)*l)) || strchr ("-+/.", *l)) && i < sizeof (m->mimetype);
-		m->mimetype[i++] = *l++) {
-		continue;
-	}
+		m->mimetype[i++] = *l++) {}
 	if (i == sizeof (m->mimetype)) {
 		m->desc[sizeof (m->mimetype) - 1] = '\0';
 		if (ms->flags & R_MAGIC_CHECK) {
@@ -1811,7 +1804,7 @@ static int apprentice_map(RMagic *ms, struct r_magic **magicp, ut32 *nmagicp, co
 #ifdef QUICK
 	if ((mm = mmap (0, (size_t)st.st_size, PROT_READ, //OPENBSDBUG  |PROT_WRITE,
 	    MAP_PRIVATE|MAP_FILE, fd, (off_t)0)) == MAP_FAILED) {
-		file_error (ms, errno, "cannot map `%s'"); //, dbname);
+		file_error (ms, errno, "cannot map `%s'", dbname);
 		goto error1;
 	}
 #define RET	2

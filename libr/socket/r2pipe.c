@@ -89,8 +89,7 @@ R_API char *r2p_read(R2Pipe *r2p) {
 			bufsz += 4096;
 			newbuf = realloc (buf, bufsz);
 			if (!newbuf) {
-				free (buf);
-				buf = NULL;
+				R_FREE (buf);
 				break;
 			}
 			buf = newbuf;
@@ -220,8 +219,18 @@ R_API R2Pipe *r2p_open(const char *cmd) {
 	w32_createPipe (r2p, cmd);
 	r2p->child = (int)(r2p->pipe);
 #else
-	pipe (r2p->input);
-	pipe (r2p->output);
+	int r = pipe (r2p->input);
+	if (r != 0) {
+		eprintf ("pipe failed on input\n");
+		r2p_close (r2p);
+		return NULL;
+	}
+	r = pipe (r2p->output);
+	if (r != 0) {
+		eprintf ("pipe failed on output\n");
+		r2p_close (r2p);
+		return NULL;
+	}
 #if LIBC_HAVE_FORK
 	r2p->child = fork ();
 #else

@@ -246,7 +246,6 @@ static char *getNameDelta(RCore *core, ut64 addr) {
 }
 
 static void archbits(RCore *core, ut64 addr) {
-	r_anal_build_range_on_hints (core->anal);
 	r_core_seek_archbits (core, addr);
 }
 
@@ -585,6 +584,7 @@ static ut64 num_callback(RNum *userptr, const char *str, int *ok) {
 				bptr = strdup (str + 3);
 				ptr = strchr (bptr, '}');
 				if (!ptr) {
+					free (bptr);
 					break;
 				}
 				*ptr = 0;
@@ -810,7 +810,6 @@ static const char *radare_argv[] = {
 	"db ", "db-", "dbd", "dbe", "dbs", "dbte", "dbtd", "dbts",
 	"dp", "dr", "dcu", "dmd", "dmp", "dml",
 	"ec","ecs", "eco",
-	"S", "S.", "S*", "S-", "S=", "Sa", "Sa-", "Sd",
 	"s", "s+", "s++", "s-", "s--", "s*", "sa", "sb", "sr",
 	"!", "!!", "!!!", "!!!-",
 	"#sha1", "#crc32", "#pcprint", "#sha256", "#sha512", "#md4", "#md5",
@@ -1782,7 +1781,7 @@ static void update_sdb(RCore *core) {
 		sdb_ns_set (DB, "bin", core->bin->sdb);
 	}
 	//SDB// bin/info
-	o = r_bin_get_object (core->bin);
+	o = r_bin_cur_object (core->bin);
 	if (o) {
 		sdb_ns_set (sdb_ns (DB, "bin", 1), "info", o->kv);
 	}
@@ -2222,6 +2221,7 @@ R_API bool r_core_init(RCore *core) {
 	core->http_up = false;
 	ZERO_FILL (core->root_cmd_descriptor);
 	core->print = r_print_new ();
+	r_core_bind (core, &(core->print->coreb));
 	core->print->user = core;
 	core->print->num = core->num;
 	core->print->offname = r_core_print_offname;
@@ -2846,8 +2846,7 @@ reaccept:
 				r_write_be32 (buf + 1, pipefd);
 				r_socket_write (c, buf, 5);
 				r_socket_flush (c);
-				free (ptr);
-				ptr = NULL;
+				R_FREE (ptr);
 				break;
 			case RMT_READ:
 				r_socket_read_block (c, (ut8*)&buf, 4);
@@ -2869,8 +2868,7 @@ reaccept:
 					memcpy (ptr + 5, core->block, i); //core->blocksize);
 					r_socket_write (c, ptr, i + 5);
 					r_socket_flush (c);
-					free (ptr);
-					ptr = NULL;
+					R_FREE (ptr);
 				} else {
 					eprintf ("Cannot read %d byte(s)\n", i);
 					r_socket_free (c);
@@ -2959,8 +2957,7 @@ reaccept:
 				r_write_be32 (buf + 1, ret);
 				r_socket_write (c, buf, 5);
 				r_socket_flush (c);
-				free (ptr);
-				ptr = NULL;
+				R_FREE (ptr);
 				break;
 			case RMT_SEEK:
 				r_socket_read_block (c, buf, 9);
@@ -2998,8 +2995,7 @@ reaccept:
 			default:
 				eprintf ("unknown command 0x%02x\n", cmd);
 				r_socket_close (c);
-				free (ptr);
-				ptr = NULL;
+				R_FREE (ptr);
 				goto out_of_function;
 			}
 		}
@@ -3311,7 +3307,7 @@ R_API RCoreAutocomplete *r_core_autocomplete_add(RCoreAutocomplete *parent, cons
 	if (!autocmpl) {
 		return NULL;
 	}
-	RCoreAutocomplete **updated = realloc (parent->subcmds, (parent->n_subcmds + 1) * sizeof(RCoreAutocomplete**));
+	RCoreAutocomplete **updated = realloc (parent->subcmds, (parent->n_subcmds + 1) * sizeof (RCoreAutocomplete*));
 	if (!updated) {
 		free (autocmpl);
 		return NULL;

@@ -1950,7 +1950,7 @@ static void cmd_reg_profile (RCore *core, char from, const char *str) { // "arp"
 		break;
 	case ' ': // "drp "
 		ptr = str + 2;
-		while (isspace (*ptr)) {
+		while (isspace ((ut8)*ptr)) {
 			ptr++;
 		}
 		if (r_str_startswith (ptr, "gdb ")) {
@@ -3401,7 +3401,7 @@ static RTreeNode *add_trace_tree_child (Sdb *db, RTree *t, RTreeNode *cur, ut64 
 	snprintf (dbkey, TN_KEY_LEN, TN_KEY_FMT, addr);
 	t_node = (struct trace_node *)(size_t)sdb_num_get (db, dbkey, NULL);
 	if (!t_node) {
-		t_node = (struct trace_node *)malloc (sizeof (*t_node));
+		t_node = R_NEW0 (struct trace_node);
 		t_node->addr = addr;
 		t_node->refs = 1;
 		sdb_num_set (db, dbkey, (ut64)(size_t)t_node, 0);
@@ -3475,7 +3475,8 @@ static void do_debug_trace_calls(RCore *core, ut64 from, ut64 to, ut64 final_add
 		}
 		if (debug_to != UT64_MAX && !r_debug_continue_until (dbg, debug_to)) {
 			break;
-		} else if (!r_debug_step (dbg, 1)) {
+		}
+		if (!r_debug_step (dbg, 1)) {
 			break;
 		}
 		debug_to = UT64_MAX;

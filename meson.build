@@ -107,7 +107,7 @@ endif
 
 if get_option('default_library') == 'shared'
   if host_machine.system() != 'windows' or cc.get_id() != 'msvc'
-    add_global_arguments('-fvisibility=hidden', language: 'c')
+    add_project_arguments('-fvisibility=hidden', language: 'c')
   endif
 endif
 
@@ -259,19 +259,34 @@ else
   message('Not using libuv, thus using fallback server implementations')
 endif
 
+has_debugger = get_option('debugger')
 have_ptrace = not ['windows', 'cygwin', 'sunos'].contains(host_machine.system())
 use_ptrace_wrap = ['linux'].contains(host_machine.system())
+
+have_ptrace = have_ptrace and has_debugger
+use_ptrace_wrap = use_ptrace_wrap and has_debugger
 
 message('HAVE_PTRACE: @0@'.format(have_ptrace))
 message('USE_PTRACE_WRAP: @0@'.format(use_ptrace_wrap))
 
+checks_level = get_option('checks_level')
+if checks_level == 9999
+  if get_option('buildtype') == 'release'
+    checks_level = 1
+  else
+    checks_level = 2
+  endif
+endif
+
+message('R2_CHECKS_LEVEL: @0@'.format(checks_level))
+
 userconf = configuration_data()
-userconf.set('R_CHECKS_LEVEL', get_option('checks_level'))
+userconf.set('R_CHECKS_LEVEL', checks_level)
 userconf.set('HAVE_LIB_MAGIC', sys_magic.found().to_int())
 userconf.set('USE_LIB_MAGIC', use_syslib_magic.to_int())
 userconf.set('HAVE_LIB_XXHASH', sys_xxhash.found().to_int())
 userconf.set('USE_LIB_XXHASH', use_sys_xxhash.to_int())
-userconf.set('DEBUGGER', 1)
+userconf.set('DEBUGGER', has_debugger.to_int())
 userconf.set('PREFIX', r2_prefix)
 userconf.set('LIBDIR', r2_libdir)
 userconf.set('INCLUDEDIR', r2_incdir)

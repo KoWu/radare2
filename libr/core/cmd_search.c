@@ -1,5 +1,6 @@
 /* radare - LGPL - Copyright 2010-2018 - pancake */
 
+#include <sdb/ht_uu.h>
 #include "r_core.h"
 #include "r_io.h"
 #include "r_list.h"
@@ -258,7 +259,17 @@ static void cmd_search_bin(RCore *core, RInterval itv) {
 		if (plug) {
 			r_cons_printf ("0x%08" PFMT64x "  %s\n", from, plug->name);
 			if (plug->size) {
-				r_bin_load_io (core->bin, core->file->fd, 0, 0, 0, core->offset, plug->name, 4096);
+				RBinOptions opt = {
+					.pluginname = plug->name,
+					.offset = core->offset,
+					.baseaddr = 0,
+					.loadaddr = 0,
+					.sz = 4096,
+					.xtr_idx = 0,
+					.rawstr = core->bin->rawstr,
+					.fd = core->file->fd,
+				};
+				r_bin_open_io (core->bin, &opt);
 				size = plug->size (core->bin->cur);
 				if (size > 0) {
 					r_cons_printf ("size %d\n", size);
@@ -330,6 +341,10 @@ R_API int r_core_search_preludes(RCore *core) {
 	RListIter *iter;
 	RIOMap *p;
 
+	if (!list) {
+		return -1;
+	}
+
 	int fc0 = count_functions (core);
 	r_list_foreach (list, iter, p) {
 		eprintf ("\r[>] Scanning %s 0x%"PFMT64x " - 0x%"PFMT64x " ",
@@ -353,6 +368,9 @@ R_API int r_core_search_preludes(RCore *core) {
 			case 16:
 				ret = r_core_search_prelude (core, from, to,
 					(const ut8 *) "\xf0\xb5", 2, NULL, 0);
+				// push {r4, r6, r7, lr}
+				ret = r_core_search_prelude (core, from, to,
+					(const ut8 *) "\xd0\xb5", 2, NULL, 0);
 				break;
 			case 32:
 				ret = r_core_search_prelude (core, from, to,
@@ -605,7 +623,13 @@ static bool maskMatches(int perm, int mask, bool only) {
 
 // TODO(maskray) returns RList<RInterval>
 R_API RList *r_core_get_boundaries_prot(RCore *core, int perm, const char *mode, const char *prefix) {
+	r_return_val_if_fail (core, NULL);
+
 	RList *list = r_list_newf (free); // XXX r_io_map_free);
+	if (!list) {
+		return NULL;
+	}
+
 	char bound_in[32];
 	char bound_from[32];
 	char bound_to[32];
@@ -615,21 +639,11 @@ R_API RList *r_core_get_boundaries_prot(RCore *core, int perm, const char *mode,
 	const ut64 search_from = r_config_get_i (core->config, bound_from),
 	      search_to = r_config_get_i (core->config, bound_to);
 	const RInterval search_itv = {search_from, search_to - search_from};
-#if 0
-	int fd = -1;
-	if (core && core->io && core->io->cur) {
-		fd = core->io->cur->fd;
-	}
-#endif
 	if (!mode) {
 		mode = r_config_get (core->config, bound_in);
 	}
 	if (perm == -1) {
 		perm = R_PERM_RWX;
-	}
-	if (!core) {
-		r_list_free (list);
-		return NULL;
 	}
 	if (!r_config_get_i (core->config, "cfg.debug") && !core->io->va) {
 		append_bound (list, core->io, search_itv, 0, r_io_size (core->io), 7);
@@ -887,10 +901,6 @@ R_API RList *r_core_get_boundaries_prot(RCore *core, int perm, const char *mode,
 			append_bound (list, core->io, search_itv, from, to - from, 5);
 		}
 	}
-	if (r_list_empty (list)) {
-		r_list_free (list);
-		list = NULL;
-	}
 	return list;
 }
 
@@ -923,8 +933,14 @@ static bool is_end_gadget(const RAnalOp *aop, const ut8 crop) {
 	return false;
 }
 
+static bool insert_into(void *user, const ut64 k, const ut64 v) {
+	HtUU *ht = (HtUU *)user;
+	ht_uu_insert (ht, k, v);
+	return true;
+}
+
 // TODO: follow unconditional jumps
-static RList *construct_rop_gadget(RCore *core, ut64 addr, ut8 *buf, int idx, const char *grep, int regex, RList *rx_list, struct endlist_pair *end_gadget, RList *badstart) {
+static RList *construct_rop_gadget(RCore *core, ut64 addr, ut8 *buf, int idx, const char *grep, int regex, RList *rx_list, struct endlist_pair *end_gadget, HtUU *badstart) {
 	int endaddr = end_gadget->instr_offset;
 	int branch_delay = end_gadget->delay_size;
 	RAsmOp asmop;
@@ -938,9 +954,8 @@ static RList *construct_rop_gadget(RCore *core, ut64 addr, ut8 *buf, int idx, co
 	int grep_find;
 	int search_hit;
 	char *rx = NULL;
-	RList /*<intptr_t>*/ *localbadstart = r_list_new ();
-	RListIter *iter;
-	void *p;
+	HtUUOptions opt = { 0 };
+	HtUU *localbadstart = ht_uu_new_opt (&opt);
 	int count = 0;
 
 	if (grep) {
@@ -959,7 +974,9 @@ static RList *construct_rop_gadget(RCore *core, ut64 addr, ut8 *buf, int idx, co
 		}
 	}
 
-	if (r_list_contains (badstart, (void *) (intptr_t) idx)) {
+	bool found;
+	ht_uu_find (badstart, idx, &found);
+	if (found) {
 		valid = false;
 		goto ret;
 	}
@@ -967,7 +984,7 @@ static RList *construct_rop_gadget(RCore *core, ut64 addr, ut8 *buf, int idx, co
 	char *opst = NULL;
 
 	while (nb_instr < max_instr) {
-		r_list_append (localbadstart, (void *) (intptr_t) idx);
+		ht_uu_insert (localbadstart, idx, 1);
 		r_asm_set_pc (core->assembler, addr);
 		if (!r_asm_disassemble (core->assembler, &asmop, buf + idx, 15)) {
 			opsz = 1;
@@ -1025,18 +1042,16 @@ ret:
 	free (grep_str);
 	if (regex && rx) {
 		r_list_free (hitlist);
-		r_list_free (localbadstart);
+		ht_uu_free (localbadstart);
 		return NULL;
 	}
 	if (!valid || (grep && end)) {
 		r_list_free (hitlist);
-		r_list_free (localbadstart);
+		ht_uu_free (localbadstart);
 		return NULL;
 	}
-	r_list_foreach (localbadstart, iter, p) {
-		r_list_append (badstart, p);
-	}
-	r_list_free (localbadstart);
+	ht_uu_foreach (localbadstart, insert_into, badstart);
+	ht_uu_free (localbadstart);
 	// If our arch has bds then we better be including them
 	if (branch_delay && r_list_length (hitlist) < (1 + branch_delay)) {
 		r_list_free (hitlist);
@@ -1210,7 +1225,6 @@ static int r_core_search_rop(RCore *core, RInterval search_itv, int opt, const c
 	int max_count = r_config_get_i (core->config, "search.maxhits");
 	int i = 0, end = 0, mode = 0, increment = 1, ret, result = true;
 	RList /*<endlist_pair>*/ *end_list = r_list_newf (free);
-	RList /*<intptr_t>*/ *badstart = r_list_new ();
 	RList /*<RRegex>*/ *rx_list = NULL;
 	int align = core->search->align;
 	RListIter *itermap = NULL;
@@ -1233,7 +1247,6 @@ static int r_core_search_rop(RCore *core, RInterval search_itv, int opt, const c
 		max_count = -1;
 	}
 	if (max_instr <= 1) {
-		r_list_free (badstart);
 		r_list_free (end_list);
 		eprintf ("ROP length (rop.len) must be greater than 1.\n");
 		if (max_instr == 1) {
@@ -1294,6 +1307,8 @@ static int r_core_search_rop(RCore *core, RInterval search_itv, int opt, const c
 	r_cons_break_push (NULL, NULL);
 
 	r_list_foreach (param->boundaries, itermap, map) {
+		HtUUOptions opt = { 0 };
+		HtUU *badstart = ht_uu_new_opt (&opt);
 		if (!r_itv_overlap (search_itv, map->itv)) {
 			continue;
 		}
@@ -1465,7 +1480,6 @@ static int r_core_search_rop(RCore *core, RInterval search_itv, int opt, const c
 				}
 			}
 		}
-		r_list_purge (badstart);
 		free (buf);
 	}
 	if (r_cons_is_breaked ()) {
@@ -1479,7 +1493,6 @@ static int r_core_search_rop(RCore *core, RInterval search_itv, int opt, const c
 bad:
 	r_list_free (rx_list);
 	r_list_free (end_list);
-	r_list_free (badstart);
 	free (grep_arg);
 	free (gregexp);
 	return result;
@@ -2791,6 +2804,13 @@ reread:
 		}
 		goto beach;
 	case 'r': // "/r" and "/re"
+		{
+		ut64 n = (input[1] == ' ' || (input[1] && input[2]==' '))
+			? r_num_math (core->num, input + 2): UT64_MAX;
+		if (n == 0LL) {
+			eprintf ("Cannot find null references.\n");
+			break;
+		}
 		switch (input[1]) {
 		case 'c': // "/rc"
 			{
@@ -2798,7 +2818,7 @@ reread:
 				RIOMap *map;
 				r_list_foreach (param.boundaries, iter, map) {
 					eprintf ("-- 0x%"PFMT64x" 0x%"PFMT64x"\n", map->itv.addr, r_itv_end (map->itv));
-					r_core_anal_search (core, map->itv.addr, r_itv_end (map->itv), UT64_MAX, 'c');
+					r_core_anal_search (core, map->itv.addr, r_itv_end (map->itv), n, 'c');
 				}
 			}
 			break;
@@ -2808,7 +2828,7 @@ reread:
 				RIOMap *map;
 				r_list_foreach (param.boundaries, iter, map) {
 					eprintf ("-- 0x%"PFMT64x" 0x%"PFMT64x"\n", map->itv.addr, r_itv_end (map->itv));
-					r_core_anal_search (core, map->itv.addr, r_itv_end (map->itv), UT64_MAX, 0);
+					r_core_anal_search (core, map->itv.addr, r_itv_end (map->itv), n, 0);
 				}
 			}
 			break;
@@ -2838,7 +2858,7 @@ reread:
 				RIOMap *map;
 				r_list_foreach (param.boundaries, iter, map) {
 					eprintf ("-- 0x%"PFMT64x" 0x%"PFMT64x"\n", map->itv.addr, r_itv_end (map->itv));
-					r_core_anal_search (core, map->itv.addr, r_itv_end (map->itv), UT64_MAX, 'r');
+					r_core_anal_search (core, map->itv.addr, r_itv_end (map->itv), n, 'r');
 				}
 			}
 			break;
@@ -2848,7 +2868,7 @@ reread:
 				RIOMap *map;
 				r_list_foreach (param.boundaries, iter, map) {
 					eprintf ("-- 0x%"PFMT64x" 0x%"PFMT64x"\n", map->itv.addr, r_itv_end (map->itv));
-					r_core_anal_search (core, map->itv.addr, r_itv_end (map->itv), UT64_MAX, 'w');
+					r_core_anal_search (core, map->itv.addr, r_itv_end (map->itv), n, 'w');
 				}
 			}
 			break;
@@ -2877,6 +2897,7 @@ reread:
 		case '?':
 			r_core_cmd_help (core, help_msg_slash_r);
 			break;
+		}
 		}
 		break;
 	case 'a': // "/a"
@@ -2948,19 +2969,17 @@ reread:
 			break;
 		case 'd': // "Cd"
 			{
-				char *p = strdup ("30800609");
 				param.crypto_search = false;
-				r_search_reset (core->search, R_SEARCH_KEYWORD);
-				r_search_set_distance (core->search, 0);
-				RSearchKeyword *kw = r_search_keyword_new_hex (p, NULL, NULL);
+				RSearchKeyword *kw;
+				kw = r_search_keyword_new_hex ("308200003082", "ffff0000ffff", NULL);
 				if (kw) {
 					r_search_kw_add (core->search, kw);
+					// eprintf ("Searching %d byte(s)...\n", kw->keyword_length);
 					r_search_begin (core->search);
-					dosearch = true;
 				} else {
-					eprintf ("no keyword\n");
+					eprintf ("bad pointer\n");
+					dosearch = false;
 				}
-				free (p);
 			}
 			break;
 		case 'a':

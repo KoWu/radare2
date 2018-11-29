@@ -45,6 +45,7 @@ static bool _map_skyline_push(RPVector *map_skyline, ut64 from, ut64 to, RIOMap 
 		// Split to two maps
 		part1 = R_NEW (RIOMapSkyline);
 		if (!part1) {
+			free (part);
 			return false;
 		}
 		part1->map = map;
@@ -474,7 +475,6 @@ R_API RIOMap* r_io_map_add_next_available(RIO* io, int fd, int perm, ut64 delta,
 	RIOMap* map;
 	SdbListIter* iter;
 	ut64 next_addr = addr,
-	end_addr = next_addr + size;
 	end_addr = next_addr + size;
 	ls_foreach (io->maps, iter, map) {
 		ut64 to = r_itv_end (map->itv);

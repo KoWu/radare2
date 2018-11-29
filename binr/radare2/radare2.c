@@ -675,9 +675,6 @@ int main(int argc, char **argv, char **envp) {
 				return 0;
 			}
 			r_config_set (r.config, "prj.name", optarg);
-			// FIXME: Doing this here will overwrite -e flags coming before -p on the cmdline.
-			r_core_project_open (&r, r_config_get (r.config, "prj.name"), threaded);
-			r_config_set (r.config, "bin.strings", "false");
 			break;
 		case 'P':
 			patchfile = optarg;
@@ -802,6 +799,9 @@ int main(int argc, char **argv, char **envp) {
 		free (pfile);
 		return main_help (help > 1? 2: 0);
 	}
+#if __WINDOWS__
+	pfile = r_acp_to_utf8 (pfile);
+#endif // __WINDOWS__
 	if (customRarunProfile) {
 		char *tfn = r_file_temp (".rarun2");
 		if (!r_file_dump (tfn, (const ut8*)customRarunProfile, strlen (customRarunProfile), 0)) {
@@ -851,6 +851,12 @@ int main(int argc, char **argv, char **envp) {
 	prefiles = NULL;
 
 	r_bin_force_plugin (r.bin, forcebin);
+
+	prj = r_config_get (r.config, "prj.name");
+	if (prj && *prj) {
+		r_core_project_open (&r, prj, threaded);
+		r_config_set (r.config, "bin.strings", "false");
+	}
 
 	//cverify_version (0);
 	if (do_connect) {
@@ -936,12 +942,12 @@ int main(int argc, char **argv, char **envp) {
 		if (buf && sz > 0) {
 			char *path = r_str_newf ("malloc://%d", sz);
 			fh = r_core_file_open (&r, path, perms, mapaddr);
-			free (path);
 			if (!fh) {
 				r_cons_flush ();
 				free (buf);
 				eprintf ("[=] Cannot open '%s'\n", path);
 				LISTS_FREE ();
+				free (path);
 				return 1;
 			}
 			r_io_map_new (r.io, fh->fd, 7, 0LL, mapaddr,
@@ -949,6 +955,7 @@ int main(int argc, char **argv, char **envp) {
 			r_io_write_at (r.io, mapaddr, buf, sz);
 			r_core_block_read (&r);
 			free (buf);
+			free (path);
 			// TODO: load rbin thing
 		} else {
 			eprintf ("Cannot slurp from stdin\n");
@@ -982,6 +989,9 @@ int main(int argc, char **argv, char **envp) {
 					if (!strstr (pfile, "://")) {
 						optind--; // take filename
 					}
+#if __WINDOWS__
+					pfile = r_acp_to_utf8 (pfile);
+#endif // __WINDOWS__
 					fh = r_core_file_open (&r, pfile, perms, mapaddr);
 					iod = (r.io && fh) ? r_io_desc_get (r.io, fh->fd) : NULL;
 					if (!strcmp (debugbackend, "gdb")) {
@@ -1051,6 +1061,9 @@ int main(int argc, char **argv, char **envp) {
 					R_FREE (path);
 				}
 #else
+#	if __WINDOWS__
+				f = r_acp_to_utf8 (f);
+#	endif // __WINDOWS__
 				if (f) {
 					char *escaped_path = r_str_arg_escape (f);
 					pfile = r_str_append (pfile, escaped_path);
@@ -1091,6 +1104,9 @@ int main(int argc, char **argv, char **envp) {
 				R_FREE (pfile);
 				while (optind < argc) {
 					pfile = argv[optind++];
+#if __WINDOWS__
+					pfile = r_acp_to_utf8 (pfile);
+#endif // __WINDOWS__
 					fh = r_core_file_open (&r, pfile, perms, mapaddr);
 					if (!fh && perms & R_PERM_W) {
 						perms |= R_PERM_CREAT;
@@ -1179,17 +1195,20 @@ int main(int argc, char **argv, char **envp) {
 			/* load symbols when doing r2 -d ls */
 			// NOTE: the baddr is redefined to support PIE/ASLR
 			baddr = r_debug_get_baddr (r.dbg, pfile);
-			if (baddr != UT64_MAX && baddr != 0) {
+
+			if (baddr != UT64_MAX && baddr != 0 && r.dbg->verbose) {
 				eprintf ("bin.baddr 0x%08" PFMT64x "\n", baddr);
 			}
 			if (run_anal > 0) {
-				if (baddr && baddr != UT64_MAX) {
+				if (baddr && baddr != UT64_MAX && r.dbg->verbose) {
 					eprintf ("Using 0x%" PFMT64x "\n", baddr);
 				}
 				if (r_core_bin_load (&r, pfile, baddr)) {
-					RBinObject *obj = r_bin_get_object (r.bin);
+					RBinObject *obj = r_bin_cur_object (r.bin);
 					if (obj && obj->info) {
-						eprintf ("asm.bits %d\n", obj->info->bits);
+						if (r.dbg->verbose) {
+							eprintf ("asm.bits %d\n", obj->info->bits);
+						}
 #if __linux__ && __GNU_LIBRARY__ && __GLIBC__ && __GLIBC_MINOR__ && __x86_64__
 						ut64 bitness = r_config_get_i (r.config, "asm.bits");
 						if (bitness == 32) {

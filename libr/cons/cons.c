@@ -1,7 +1,8 @@
 /* radare2 - LGPL - Copyright 2008-2018 - pancake, Jody Frankowski */
 
 #include <r_cons.h>
-#include <r_print.h>
+#include <r_util.h>
+#include <r_util/r_print.h>
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
@@ -370,18 +371,6 @@ R_API bool r_cons_enable_mouse(const bool enable) {
 
 // Stub function that cb_main_output gets pointed to in util/log.c by r_cons_new
 // This allows Cutter to set per-task logging redirection
-R_API void r_cons_log_stub(const char *output, const char *funcname, const char *filename,
- ut32 lineno, RLogLevel level, const char *tag, const char *fmtstr, ...) {
-	if (!I.null && I.context->log_callback) {
-		va_list args;
-		va_start (args, fmtstr);
-		I.context->log_callback (output, funcname, filename, lineno, level, tag, fmtstr, args);
-		va_end (args);
-	} else {
-		r_cons_strcat (output);
-	}
-}
-
 R_API RCons *r_cons_new() {
 	I.refcnt++;
 	if (I.refcnt != 1) {
@@ -446,9 +435,6 @@ R_API RCons *r_cons_new() {
 
 	r_print_set_is_interrupted_cb (r_cons_is_breaked);
 
-	// This sets the default logging callback in util/log.c for all r_log_ calls
-	r_log_set_main_callback ((RLogCallback)r_cons_log_stub);
-
 	return &I;
 }
 
@@ -463,8 +449,7 @@ R_API RCons *r_cons_free() {
 		I.line = NULL;
 	}
 	if (I.context->buffer) {
-		free (I.context->buffer);
-		I.context->buffer = NULL;
+		R_FREE (I.context->buffer);
 	}
 	R_FREE (I.break_word);
 	cons_context_deinit (I.context);
@@ -776,9 +761,9 @@ R_API void r_cons_flush(void) {
 				return;
 			}
 #else
-			char buf[64];
-			char *buflen = r_num_units (buf, I.context->buffer_len);
-			if (buflen && !r_cons_yesno ('n',"Do you want to print %s chars? (y/N)", buflen)) {
+			char buf[8];
+			r_num_units (buf, sizeof (buf), I.context->buffer_len);
+			if (!r_cons_yesno ('n', "Do you want to print %s chars? (y/N)", buf)) {
 				r_cons_reset ();
 				return;
 			}
@@ -897,7 +882,7 @@ R_API void r_cons_visual_write(char *buffer) {
 	memset (&white, ' ', sizeof (white));
 	while ((nl = strchr (ptr, '\n'))) {
 		int len = ((int)(size_t)(nl-ptr))+1;
-		int lines_needed;
+		int lines_needed = 0;
 
 		*nl = 0;
 		alen = real_strlen (ptr, len);
@@ -1236,8 +1221,8 @@ R_API void r_cons_show_cursor(int cursor) {
  * If you doesn't use this order you'll probably loss your terminal properties.
  *
  */
-static int oldraw = -1;
 R_API void r_cons_set_raw(bool is_raw) {
+	static int oldraw = -1;
 	if (oldraw != -1) {
 		if (is_raw == oldraw) {
 			return;
@@ -1278,17 +1263,10 @@ R_API void r_cons_invert(int set, int color) {
 */
 R_API void r_cons_set_cup(int enable) {
 #if __UNIX__ || __CYGWIN__
-	if (enable) {
-		const char *code =
-			"\x1b[?1049h" // xterm
-			"\x1b" "7\x1b[?47h"; // xterm-color
-		write (2, code, strlen (code));
-	} else {
-		const char *code =
-			"\x1b[?1049l" // xterm
-			"\x1b[?47l""\x1b""8"; // xterm-color
-		write (2, code, strlen (code));
-	}
+	const char *code = enable
+		? "\x1b[?1049h" "\x1b" "7\x1b[?47h"
+		: "\x1b[?1049l" "\x1b[?47l" "\x1b" "8";
+	write (2, code, strlen (code));
 	fflush (stdout);
 #elif __WINDOWS__ && !__CYGWIN__
 	if (I.ansicon) {
@@ -1392,8 +1370,7 @@ R_API void r_cons_highlight(const char *word) {
 		/* don't free orig - it's assigned
 		 * to I.context->buffer and possibly realloc'd */
 	} else {
-		free (I.highlight);
-		I.highlight = NULL;
+		R_FREE (I.highlight);
 	}
 }
 
@@ -1571,4 +1548,10 @@ R_API void r_cons_cmd_help(const char *help[], bool use_color) {
 				padding, "", pal_help_color, help[i + 2], pal_reset);
 		}
 	}
+}
+
+R_API void r_cons_clear_buffer(void) {
+#if __UNIX__ || __CYGWIN__
+	write (1, "\x1b" "c\x1b[3J",  6);
+#endif
 }

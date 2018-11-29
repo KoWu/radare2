@@ -7,6 +7,7 @@
 #include <r_util.h>
 #include "pe.h"
 #include <time.h>
+#include <sdb/ht_uu.h>
 
 #define PE_IMAGE_FILE_MACHINE_RPI2 452
 #define MAX_METADATA_STRING_LENGTH 256
@@ -477,10 +478,12 @@ static int bin_pe_parse_imports(struct PE_(r_bin_pe_obj_t)* bin,
 					eprintf ("Import name '%s' has been truncated.\n", import_name);
 				}
 			}
-			if (!(*importp = realloc (*importp, (*nimp + 1) * sizeof (struct r_bin_pe_import_t)))) {
+			struct r_bin_pe_import_t *new_importp = realloc (*importp, (*nimp + 1) * sizeof (struct r_bin_pe_import_t));
+			if (!new_importp) {
 				r_sys_perror ("realloc (import)");
 				goto error;
 			}
+			*importp = new_importp;
 			memcpy ((*importp)[*nimp].name, import_name, PE_NAME_LENGTH);
 			(*importp)[*nimp].name[PE_NAME_LENGTH] = '\0';
 			(*importp)[*nimp].vaddr = bin_pe_rva_to_va (bin, FirstThunk + i * sizeof (PE_DWord));
@@ -639,6 +642,7 @@ static struct r_bin_pe_export_t* parse_symbol_table(struct PE_(r_bin_pe_obj_t)* 
 	const int srsz = COFF_SYMBOL_SIZE; // symbol record size
 	struct r_bin_pe_section_t* sections;
 	struct r_bin_pe_export_t* exp;
+	struct r_bin_pe_export_t* new_exports = NULL;
 	const size_t export_t_sz = sizeof (struct r_bin_pe_export_t);
 	int bufsz, i, shsz;
 	SymbolRecord* sr;
@@ -667,11 +671,13 @@ static struct r_bin_pe_export_t* parse_symbol_table(struct PE_(r_bin_pe_obj_t)* 
 	if (exports) {
 		int osz = sz;
 		sz += exports_sz;
-		exports = realloc (exports, sz + export_t_sz);
-		if (!exports) {
+		new_exports = realloc (exports, sz + export_t_sz);
+		if (!new_exports) {
 			free (buf);
 			return NULL;
 		}
+		exports = new_exports;
+		new_exports = NULL;
 		exp = (struct r_bin_pe_export_t*) (((const ut8*) exports) + osz);
 	} else {
 		sz = exports_sz;
@@ -1130,8 +1136,7 @@ static int bin_pe_init_imports(struct PE_(r_bin_pe_obj_t)* bin) {
 	}
 	//int maxcount = maxidsz/ sizeof (struct r_bin_pe_import_t);
 
-	free (bin->import_directory);
-	bin->import_directory = NULL;
+	R_FREE (bin->import_directory);
 	if (import_dir_paddr != 0) {
 		if (import_dir_size < 1 || import_dir_size > maxidsz) {
 			bprintf ("Warning: Invalid import directory size: 0x%x is now 0x%x\n", import_dir_size, maxidsz);
@@ -1147,8 +1152,7 @@ static int bin_pe_init_imports(struct PE_(r_bin_pe_obj_t)* bin) {
 			new_import_dir = (PE_(image_import_directory)*)realloc (import_dir, ((1 + indx) * dir_size));
 			if (!new_import_dir) {
 				r_sys_perror ("malloc (import directory)");
-				free (import_dir);
-				import_dir = NULL;
+				R_FREE (import_dir);
 				break; //
 				//			goto fail;
 			}
@@ -1157,8 +1161,7 @@ static int bin_pe_init_imports(struct PE_(r_bin_pe_obj_t)* bin) {
 			curr_import_dir = import_dir + (indx - 1);
 			if (r_buf_read_at (bin->b, import_dir_offset + (indx - 1) * dir_size, (ut8*) (curr_import_dir), dir_size) < 1) {
 				bprintf ("Warning: read (import directory)\n");
-				free (import_dir);
-				import_dir = NULL;
+				R_FREE (import_dir);
 				break; //return false;
 			}
 			count++;
@@ -1204,8 +1207,7 @@ static int bin_pe_init_imports(struct PE_(r_bin_pe_obj_t)* bin) {
 
 	return true;
 fail:
-	free (import_dir);
-	import_dir = NULL;
+	R_FREE (import_dir);
 	bin->import_directory = import_dir;
 	free (delay_import_dir);
 	return false;
@@ -1227,8 +1229,7 @@ static int bin_pe_init_exports(struct PE_(r_bin_pe_obj_t)* bin) {
 	}
 	if (r_buf_read_at (bin->b, export_dir_paddr, (ut8*) bin->export_directory, sizeof (PE_(image_export_directory))) == -1) {
 		bprintf ("Warning: read (export directory)\n");
-		free (bin->export_directory);
-		bin->export_directory = NULL;
+		R_FREE (bin->export_directory);
 		return false;
 	}
 	return true;
@@ -1263,8 +1264,7 @@ static int bin_pe_init_resource(struct PE_(r_bin_pe_obj_t)* bin) {
 	if (r_buf_read_at (bin->b, resource_dir_paddr, (ut8*) bin->resource_directory,
 		sizeof (*bin->resource_directory)) != sizeof (*bin->resource_directory)) {
 		bprintf ("Warning: read (resource directory)\n");
-		free (bin->resource_directory);
-		bin->resource_directory = NULL;
+		R_FREE (bin->resource_directory);
 		return false;
 	}
 	bin->resource_directory_offset = resource_dir_paddr;
@@ -2258,7 +2258,7 @@ static char* _resource_type_str(int type) {
 	return strdup (typeName);
 }
 
-static void _parse_resource_directory(struct PE_(r_bin_pe_obj_t) *bin, Pe_image_resource_directory *dir, ut64 offDir, int type, int id, SdbHt *dirs) {
+static void _parse_resource_directory(struct PE_(r_bin_pe_obj_t) *bin, Pe_image_resource_directory *dir, ut64 offDir, int type, int id, HtUU *dirs) {
 	int index = 0;
 	ut32 totalRes = dir->NumberOfNamedEntries + dir->NumberOfIdEntries;
 	ut64 rsrc_base = bin->resource_directory_offset;
@@ -2269,11 +2269,10 @@ static void _parse_resource_directory(struct PE_(r_bin_pe_obj_t) *bin, Pe_image_
 	for (index = 0; index < totalRes; index++) {
 		Pe_image_resource_directory_entry entry;
 		off = rsrc_base + offDir + sizeof(*dir) + index * sizeof(entry);
-		char *key = sdb_fmt ("0x%08"PFMT64x, off);
-		if (sdb_ht_find (dirs, key, NULL)) {
+		if (ht_uu_find (dirs, off, NULL)) {
 			break;
 		}
-		sdb_ht_insert (dirs, key, "1");
+		ht_uu_insert (dirs, off, 1);
 		if (off > bin->size || off + sizeof (entry) > bin->size) {
 			break;
 		}
@@ -2399,25 +2398,26 @@ R_API void PE_(bin_pe_parse_resource)(struct PE_(r_bin_pe_obj_t) *bin) {
 	Pe_image_resource_directory *rs_directory = bin->resource_directory;
 	ut32 curRes = 0;
 	int totalRes = 0;
-	SdbHt *dirs = sdb_ht_new (); //to avoid infinite loops
+	HtUUOptions opt = { 0 };
+	HtUU *dirs = ht_uu_new_opt (&opt); //to avoid infinite loops
 	if (!dirs) {
 		return;
 	}
 	if (!rs_directory) {
-		sdb_ht_free (dirs);
+		ht_uu_free (dirs);
 		return;
 	}
 	curRes = rs_directory->NumberOfNamedEntries;
 	totalRes = curRes + rs_directory->NumberOfIdEntries;
 	if (totalRes > R_PE_MAX_RESOURCES) {
 		eprintf ("Error parsing resource directory\n");
-		sdb_ht_free (dirs);
+		ht_uu_free (dirs);
 		return;
 	}
 	for (index = 0; index < totalRes; index++) {
 		Pe_image_resource_directory_entry typeEntry;
 		off = rsrc_base + sizeof (*rs_directory) + index * sizeof (typeEntry);
-		sdb_ht_insert (dirs, sdb_fmt ("0x%08"PFMT64x, off), "1");
+		ht_uu_insert (dirs, off, 1);
 		if (off > bin->size || off + sizeof(typeEntry) > bin->size) {
 			break;
 		}
@@ -2435,7 +2435,7 @@ R_API void PE_(bin_pe_parse_resource)(struct PE_(r_bin_pe_obj_t) *bin) {
 			_parse_resource_directory (bin, &identEntry, typeEntry.u2.s.OffsetToDirectory, typeEntry.u1.Id, 0, dirs);
 		}
 	}
-	sdb_ht_free (dirs);
+	ht_uu_free (dirs);
 	_store_resource_sdb (bin);
 }
 
@@ -2839,7 +2839,7 @@ static int get_debug_info(struct PE_(r_bin_pe_obj_t)* bin, PE_(image_debug_direc
 	}
 
 	while (i < 33) {
-		res->guidstr[i] = toupper ((int) res->guidstr[i]);
+		res->guidstr[i] = toupper ((ut8) res->guidstr[i]);
 		i++;
 	}
 
@@ -3006,10 +3006,11 @@ struct r_bin_pe_lib_t* PE_(r_bin_pe_get_libs)(struct PE_(r_bin_pe_obj_t)* bin) {
 		return NULL;
 	}
 	struct r_bin_pe_lib_t* libs = NULL;
+	struct r_bin_pe_lib_t* new_libs = NULL;
 	PE_(image_import_directory) * curr_import_dir = NULL;
 	PE_(image_delay_import_directory) * curr_delay_import_dir = NULL;
 	PE_DWord name_off = 0;
-	SdbHt* lib_map = NULL;
+	HtPP *lib_map = NULL;
 	ut64 off; //cache value
 	int index = 0;
 	int len = 0;
@@ -3053,11 +3054,13 @@ struct r_bin_pe_lib_t* PE_(r_bin_pe_get_libs)(struct PE_(r_bin_pe_obj_t)* bin) {
 				sdb_ht_insert (lib_map, libs[index].name, "a");
 				libs[index++].last = 0;
 				if (index >= max_libs) {
-					libs = realloc (libs, (max_libs * 2) * sizeof (struct r_bin_pe_lib_t));
-					if (!libs) {
+					new_libs = realloc (libs, (max_libs * 2) * sizeof (struct r_bin_pe_lib_t));
+					if (!new_libs) {
 						r_sys_perror ("realloc (libs)");
 						goto out_error;
 					}
+					libs = new_libs;
+					new_libs = NULL;
 					max_libs *= 2;
 				}
 			}
@@ -3087,12 +3090,13 @@ next:
 				sdb_ht_insert (lib_map, libs[index].name, "a");
 				libs[index++].last = 0;
 				if (index >= max_libs) {
-					libs = realloc (libs, (max_libs * 2) * sizeof (struct r_bin_pe_lib_t));
-					if (!libs) {
-						sdb_ht_free (lib_map);
+					new_libs = realloc (libs, (max_libs * 2) * sizeof (struct r_bin_pe_lib_t));
+					if (!new_libs) {
 						r_sys_perror ("realloc (libs)");
-						return NULL;
+						goto out_error;
 					}
+					libs = new_libs;
+					new_libs = NULL;
 					max_libs *= 2;
 				}
 			}

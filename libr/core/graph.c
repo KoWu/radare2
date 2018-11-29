@@ -1246,6 +1246,9 @@ static void place_single(const RAGraph *g, int l, const RGraphNode *bm, const RG
 	const RGraphNode *gk, *v = g->layers[l].nodes[va];
 	const RANode *ak;
 	RANode *av = get_anode (v);
+	if (!av) {
+		return;
+	}
 	const RList *neigh;
 	const RListIter *itk;
 	int len;
@@ -1630,6 +1633,7 @@ static void fix_back_edge_dummy_nodes (RAGraph *g, RANode *from, RANode *to) {
 	RGraphNode *gv = NULL;
 	RListIter *it;
 	int i;
+	r_return_if_fail (g && from && to);
 	const RList *neighbours = r_graph_get_neighbours (g->graph, to->gnode);
 	graph_foreach_anode (neighbours, it, gv, v) {
 		tmp = v;
@@ -1985,6 +1989,8 @@ static char *get_body(RCore *core, ut64 addr, int size, int opts) {
 		"asm.comments", "asm.cmt.right", NULL);
 	const bool o_comments = r_config_get_i (core->config, "graph.comments");
 	const bool o_cmtright = r_config_get_i (core->config, "graph.cmtright");
+	const bool o_bytes = r_config_get_i (core->config, "graph.bytes");
+	const bool o_flags_in_bytes = r_config_get_i (core->config, "asm.flags.inbytes");
 	const bool o_graph_offset = r_config_get_i (core->config, "graph.offset");
 	int o_cursor = core->print->cur_enabled;
 
@@ -1996,18 +2002,15 @@ static char *get_body(RCore *core, ut64 addr, int size, int opts) {
 	r_config_set_i (core->config, "asm.marks", false);
 	r_config_set_i (core->config, "asm.cmt.right", (opts & BODY_SUMMARY) || o_cmtright);
 	r_config_set_i (core->config, "asm.comments", (opts & BODY_SUMMARY) || o_comments);
+	r_config_set_i (core->config, "asm.bytes", 
+		(opts & (BODY_SUMMARY | BODY_OFFSETS)) || o_bytes || o_flags_in_bytes);
+	r_config_set_i (core->config, "asm.bb.middle", false);
 	core->print->cur_enabled = false;
 
 	if (opts & BODY_OFFSETS || opts & BODY_SUMMARY || o_graph_offset) {
 		r_config_set_i (core->config, "asm.offset", true);
 	} else {
 		r_config_set_i (core->config, "asm.offset", false);
-	}
-
-	if (opts & BODY_OFFSETS || opts & BODY_SUMMARY) {
-		r_config_set_i (core->config, "asm.bytes", true);
-	} else {
-		r_config_set_i (core->config, "asm.bytes", false);
 	}
 
 	bool html = r_config_get_i (core->config, "scr.html");
@@ -3272,14 +3275,13 @@ static int agraph_print(RAGraph *g, int is_interactive, RCore *core, RAnalFuncti
 
 	if (is_interactive) {
 		const char *cmdv = r_config_get (core->config, "cmd.gprompt");
-		r_cons_strcat (Color_RESET);
-		if (cmdv && *cmdv) {
-			r_cons_gotoxy (0, 0);
-			r_cons_fill_line ();
-			r_cons_gotoxy (0, 0);
-			r_core_cmd0 (core, cmdv);
-		}
 		r_cons_visual_flush ();
+		if (cmdv && *cmdv) {
+			r_cons_gotoxy (0, 2);
+			r_cons_strcat (Color_RESET);
+			r_core_cmd0 (core, cmdv);
+			r_cons_flush ();
+		}
 	}
 	return true;
 }
@@ -4051,8 +4053,8 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 			ut64 old_off = core->offset;
 			ut64 off = r_core_anal_get_bbaddr (core, core->offset);
 			r_core_seek (core, off, 0);
-			if ((key == 'x' && !r_core_visual_refs (core, true)) ||
-			    (key == 'X' && !r_core_visual_refs (core, false))) {
+			if ((key == 'x' && !r_core_visual_refs (core, true, true)) ||
+			    (key == 'X' && !r_core_visual_refs (core, false, true))) {
 				r_core_seek (core, old_off, 0);
 			}
 			break;
@@ -4277,7 +4279,7 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 			agraph_toggle_mini (g);
 			break;
 		case 'v':
-			r_core_visual_anal (core);
+			r_core_visual_anal (core, NULL);
 			break;
 		case 'J':
 			// copypaste from 'j'

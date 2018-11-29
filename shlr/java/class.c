@@ -967,8 +967,7 @@ R_API int extract_type_value(const char *arg_str, char **output) {
 		return 0;
 	}
 	if (output && *output && *output != NULL) {
-		free (*output);
-		*output = NULL;
+		R_FREE (*output);
 	}
 	while (arg_str && *arg_str && !found_one) {
 		len = 0;
@@ -2523,8 +2522,7 @@ R_API RBinField *r_bin_java_create_new_rbinfield_from_field(RBinJavaField *fm_ty
 R_API RBinSymbol *r_bin_java_create_new_symbol_from_field(RBinJavaField *fm_type, ut64 baddr) {
 	RBinSymbol *sym = R_NEW0 (RBinSymbol);
 	if (fm_type == NULL || fm_type->field_ref_cp_obj == NULL || fm_type->field_ref_cp_obj == &R_BIN_JAVA_NULL_TYPE) {
-		free (sym);
-		sym = NULL;
+		R_FREE (sym);
 	}
 	if (sym) {
 		sym->name = strdup (fm_type->name);
@@ -2609,8 +2607,7 @@ R_API RBinSymbol *r_bin_java_create_new_symbol_from_ref(RBinJavaCPTypeObj *obj, 
 	if (obj == NULL || (obj->tag != R_BIN_JAVA_CP_METHODREF &&
 	obj->tag != R_BIN_JAVA_CP_INTERFACEMETHOD_REF &&
 	obj->tag != R_BIN_JAVA_CP_FIELDREF)) {
-		free (sym);
-		sym = NULL;
+		R_FREE (sym);
 		return sym;
 	}
 	if (sym) {
@@ -2648,7 +2645,7 @@ R_API RList *r_bin_java_get_sections(RBinJavaObj *bin) {
 	if (bin->cp_count > 0) {
 		section = R_NEW0 (RBinSection);
 		if (section) {
-			strcpy (section->name, "constant_pool");
+			section->name = strdup ("constant_pool");
 			section->size = bin->cp_size;
 			section->paddr = bin->cp_offset + baddr;
 			section->perm = R_PERM_R;
@@ -2660,7 +2657,7 @@ R_API RList *r_bin_java_get_sections(RBinJavaObj *bin) {
 	if (bin->fields_count > 0) {
 		section = R_NEW0 (RBinSection);
 		if (section) {
-			strcpy (section->name, "fields");
+			section->name = strdup ("fields");
 			section->size = bin->fields_size;
 			section->paddr = bin->fields_offset + baddr;
 			section->perm = R_PERM_R;
@@ -2673,7 +2670,7 @@ R_API RList *r_bin_java_get_sections(RBinJavaObj *bin) {
 				}
 				section = R_NEW0 (RBinSection);
 				if (section) {
-					snprintf (section->name, R_BIN_SIZEOF_STRINGS, "attrs.%s", fm_type->name);
+					section->name = r_str_newf ("attrs.%s", fm_type->name);
 					section->size = fm_type->size - (fm_type->file_offset - fm_type->attr_offset);
 					section->paddr = fm_type->attr_offset + baddr;
 					section->perm = R_PERM_R;
@@ -2686,7 +2683,7 @@ R_API RList *r_bin_java_get_sections(RBinJavaObj *bin) {
 	if (bin->methods_count > 0) {
 		section = R_NEW0 (RBinSection);
 		if (section) {
-			strcpy (section->name, "methods");
+			section->name = strdup ("methods");
 			section->size = bin->methods_size;
 			section->paddr = bin->methods_offset + baddr;
 			section->perm = R_PERM_RX;
@@ -2699,7 +2696,7 @@ R_API RList *r_bin_java_get_sections(RBinJavaObj *bin) {
 				}
 				section = R_NEW0 (RBinSection);
 				if (section) {
-					snprintf (section->name, R_BIN_SIZEOF_STRINGS, "attrs.%s", fm_type->name);
+					section->name = r_str_newf ("attrs.%s", fm_type->name);
 					section->size = fm_type->size - (fm_type->file_offset - fm_type->attr_offset);
 					section->paddr = fm_type->attr_offset + baddr;
 					section->perm = R_PERM_R;
@@ -2712,7 +2709,7 @@ R_API RList *r_bin_java_get_sections(RBinJavaObj *bin) {
 	if (bin->interfaces_count > 0) {
 		section = R_NEW0 (RBinSection);
 		if (section) {
-			strcpy (section->name, "interfaces");
+			section->name = strdup ("interfaces");
 			section->size = bin->interfaces_size;
 			section->paddr = bin->interfaces_offset + baddr;
 			section->perm = R_PERM_R;
@@ -2724,7 +2721,7 @@ R_API RList *r_bin_java_get_sections(RBinJavaObj *bin) {
 	if (bin->attrs_count > 0) {
 		section = R_NEW0 (RBinSection);
 		if (section) {
-			strcpy (section->name, "attributes");
+			section->name = strdup ("attributes");
 			section->size = bin->attrs_size;
 			section->paddr = bin->attrs_offset + baddr;
 			section->perm = R_PERM_R;
@@ -3006,18 +3003,18 @@ R_API RList *r_bin_java_get_symbols(RBinJavaObj *bin) {
 	bin->lang = "java";
 	if (bin->cf.major[1] >= 46) {
 		switch (bin->cf.major[1]) {
-			static char lang[10];
+			static char lang[32];
 			int langid;
 			case 46:
 			case 47:
 			case 48:
 				langid = 2 + (bin->cf.major[1] - 46);
-				snprintf (lang, sizeof(lang) - 1, "java 1.%d", langid);
+				snprintf (lang, sizeof (lang) - 1, "java 1.%d", langid);
 				bin->lang = lang;
 				break;
 			default:
 				langid = 5 + (bin->cf.major[1] - 49);
-				snprintf (lang, sizeof(lang) - 1, "java %d", langid);
+				snprintf (lang, sizeof (lang) - 1, "java %d", langid);
 				bin->lang = lang;
 		}
 	}
@@ -4541,10 +4538,10 @@ R_API RBinJavaAttrInfo *r_bin_java_stack_map_table_attr_new(ut8 *buffer, ut64 sz
 	ut32 i = 0;
 	ut64 offset = 0;
 	RBinJavaStackMapFrame *stack_frame = NULL, *new_stack_frame = NULL;
-	RBinJavaAttrInfo *attr = r_bin_java_default_attr_new (buffer, sz, buf_offset);
 	if (sz < 10) {
 		return NULL;
 	}
+	RBinJavaAttrInfo *attr = r_bin_java_default_attr_new (buffer, sz, buf_offset);
 	offset += 6;
 	IFDBG eprintf("r_bin_java_stack_map_table_attr_new: New stack map allocated.\n");
 	if (!attr) {
@@ -5029,11 +5026,9 @@ R_API int r_bin_java_check_reset_cp_obj(RBinJavaCPTypeObj *cp_obj, ut8 tag) {
 	if (tag < R_BIN_JAVA_CP_METAS_SZ) {
 		if (tag != cp_obj->tag) {
 			if (cp_obj->tag == R_BIN_JAVA_CP_UTF8) {
-				free (cp_obj->info.cp_utf8.bytes);
-				cp_obj->info.cp_utf8.bytes = NULL;
+				R_FREE (cp_obj->info.cp_utf8.bytes);
 				cp_obj->info.cp_utf8.length = 0;
-				free (cp_obj->name);
-				cp_obj->name = NULL;
+				R_FREE (cp_obj->name);
 				res = true;
 			}
 			cp_obj->tag = tag;
@@ -6267,6 +6262,7 @@ R_API RBinJavaElementValuePair *r_bin_java_element_pair_new(ut8 *buffer, ut64 sz
 	offset += evp->value->size;
 	if (offset >= sz) {
 		free (evp->value);
+		free (evp);
 		return NULL;
 	}
 	evp->size = offset;
@@ -6371,8 +6367,7 @@ R_API void r_bin_java_element_value_free(void /*RBinJavaElementValue*/ *e) {
 	RBinJavaCPTypeObj *obj = NULL;
 	RBinJavaElementValue *ev_element = NULL;
 	if (element_value) {
-		free (element_value->metas);
-		element_value->metas = NULL;
+		R_FREE (element_value->metas);
 		switch (element_value->tag) {
 		case R_BIN_JAVA_EV_TAG_BYTE:
 		case R_BIN_JAVA_EV_TAG_CHAR:

@@ -99,11 +99,13 @@ static const char *menus_Analyze[] = {
 };
 
 static const char *menus_Help[] = {
-	"Fortune", "Commands", "2048", "License", "About",
+	"Fortune", "Commands", "2048", "License", "Lock Screen", "About",
 	NULL
 };
 
 static const char *help_msg_panels[] = {
+	"|",        "split the current panel vertically",
+	"-",        "split the current panel horizontally",
 	":",        "run r2 command in prompt",
 	"_",        "start the hud input mode",
 	"?",        "show this help",
@@ -113,38 +115,57 @@ static const char *help_msg_panels[] = {
 	"*",        "show pseudo code/r2dec in the current panel",
 	"/",        "highlight the keyword",
 	"[1-9]",    "follow jmp/call identified by shortcut (like ;[1])",
+	"' '",      "(space) toggle graph / panels",
+	"tab",      "go to the next panel",
 	"b",        "browse symbols, flags, configurations, classes, ...",
 	"c",        "toggle cursor",
 	"C",        "toggle color",
 	"d",        "define in the current address. Same as Vd",
 	"D",        "show disassembly in the current panel",
+	"e",        "change title and command of current panel",
+	"g",        "show graph in the current panel",
 	"i",        "insert hex",
+	"hjkl",     "move around (left-down-up-right)",
+	"J",        "scroll panels down by page",
+	"K",        "scroll panels up by page",
 	"m",        "select the menu panel",
+	"M",        "open new custom frame",
+	"nN",       "create new panel with given command",
 	"o",        "go/seek to given offset",
 	"pP",       "seek to next or previous scr.nkey",
 	"q",        "quit, back to visual mode",
 	"r",        "toggle jmphints/leahints",
 	"sS",       "step in / step over",
 	"uU",       "undo / redo seek",
+	"w",        "start Window mode",
+	"V",        "go to the graph mode",
+	"X",        "close current panel",
+	"z",        "swap current panel with the first one",
 	NULL
 };
 
 static const char *help_msg_panels_window[] = {
-	"|",        "split the current panel vertically",
-	"-",        "split the current panel horizontally",
-	"<>",       "scroll panels vertically by page",
-	"' '",      "(space) toggle graph / panels",
-	"e",        "change title and command of current panel",
-	"g",        "show graph in the current panel",
+	"?",        "show this help",
+	"??",       "show the user-friendly hud",
+	"Enter",    "start Zoom mode",
+	"c",        "toggle cursor",
 	"hjkl",     "move around (left-down-up-right)",
 	"JK",       "resize panels vertically",
 	"HL",       "resize panels horizontally",
-	"M",        "open new custom frame",
-	"nN",       "create new panel with given command",
-	"V",        "go to the graph mode",
-	"w",        "start the window mode",
+	"q",        "quit Window mode",
+	NULL
+};
+
+static const char *help_msg_panels_zoom[] = {
+	"?",        "show this help",
+	"??",       "show the user-friendly hud",
+	":",        "run r2 command in prompt",
+	"Enter",    "quit Zoom mode",
+	"tab",      "go to the next panel",
+	"hjkl",     "move around (left-down-up-right)",
+	"sS",       "step in / step over",
 	"X",        "close current panel",
-	"z",        "swap current panel with the first one",
+	"q",        "quit Zoom mode",
 	NULL
 };
 
@@ -250,13 +271,14 @@ static void restorePanelPos(RPanel* panel);
 static void savePanelsLayout(RCore* core, bool temp);
 static int loadSavedPanelsLayout(RCore *core, bool temp);
 static void replaceCmd(RPanels* panels, char *title, char *cmd);
+static void swapPanels(RPanels *panels, int p0, int p1);
 static void handleMenu(RCore *core, const int key, int *exit);
 static void toggleZoomMode(RPanels *panels);
 static void toggleWindowMode(RPanels *panels);
 static void maximizePanelSize(RPanels *panels);
 static void insertValue(RCore *core);
 static bool moveToDirection(RPanels *panels, Direction direction);
-static void showHelp(RCore *core);
+static void showHelp(RCore *core, RPanelsMode mode);
 static RConsCanvas *createNewCanvas(RCore *core, int w, int h);
 
 static void panelPrint(RCore *core, RConsCanvas *can, RPanel *panel, int color) {
@@ -881,6 +903,13 @@ static void handleZoomMode(RCore *core, const int key) {
 			}
 			setRefreshAll (panels);
 			break;
+		case 'S':
+			panelSingleStepOver (core);
+			if (!strcmp (panels->panel[panels->curnode].cmd, PANEL_CMD_DISASSEMBLY)) {
+				panels->panel[panels->curnode].addr = core->offset;
+			}
+			setRefreshAll (panels);
+			break;
 		case 9:
 			restorePanelPos (&panel[panels->curnode]);
 			handleTabKey (core, false);
@@ -903,7 +932,7 @@ static void handleZoomMode(RCore *core, const int key) {
 			setRefreshAll (panels);
 			break;
 		case '?':
-			showHelp(core);
+			showHelp (core, panels->mode);
 			break;
 	}
 }
@@ -938,11 +967,24 @@ static void handleWindowMode(RCore *core, const int key) {
 			setRefreshAll (panels);
 		}
 		break;
-	case 9:
-		handleTabKey (core, false);
+	case 'H':
+		r_cons_switchbuf (false);
+		resizePanelLeft (panels);
 		break;
-	case 'Z':
-		handleTabKey (core, true);
+	case 'L':
+		r_cons_switchbuf (false);
+		resizePanelRight (panels);
+		break;
+	case 'J':
+		r_cons_switchbuf (false);
+		resizePanelDown (panels);
+		break;
+	case 'K':
+		r_cons_switchbuf (false);
+		resizePanelUp (panels);
+		break;
+	case '?':
+		showHelp (core, panels->mode);
 		break;
 	}
 }
@@ -1208,13 +1250,13 @@ static void resizePanelDown(RPanels *panels) {
 		}
 		if (ty0 == cy1) {
 			if (ty0 + PANEL_CONFIG_RESIZE_H >= ty1) {
-				return;
+				goto beach;
 			}
 			targets1[cur1++] = p;
 		}
 		if (ty1 == cy1) {
 			if (ty1 + PANEL_CONFIG_RESIZE_H >= panels->can->h) {
-				return;
+				goto beach;
 			}
 			targets2[cur2++] = p;
 		}
@@ -1393,6 +1435,29 @@ static void replaceCmd(RPanels* panels, char *title, char *cmd) {
 	panels->panel[panels->curnode].cmd = r_str_newf (cmd);
 	panels->panel[panels->curnode].cmdStrCache = NULL;
 	setRefreshAll (panels);
+}
+
+static void swapPanels(RPanels *panels, int p0, int p1) {
+	char *t = panels->panel[p0].title;
+	char *c = panels->panel[p0].cmd;
+	char *cc = panels->panel[p0].cmdStrCache;
+	char *cur = panels->panel[p0].curpos;
+	ut64 ba = panels->panel[p0].baseAddr;
+	ut64 a = panels->panel[p0].addr;
+
+	panels->panel[p0].title = panels->panel[p1].title;
+	panels->panel[p0].cmd = panels->panel[p1].cmd;
+	panels->panel[p0].cmdStrCache = panels->panel[p1].cmdStrCache;
+	panels->panel[p0].curpos = panels->panel[p1].curpos;
+	panels->panel[p0].baseAddr = panels->panel[p1].baseAddr;
+	panels->panel[p0].addr = panels->panel[p1].addr;
+
+	panels->panel[p1].title = t;
+	panels->panel[p1].cmd = c;
+	panels->panel[p1].cmdStrCache = cc;
+	panels->panel[p1].curpos = cur;
+	panels->panel[p1].baseAddr = ba;
+	panels->panel[p1].addr = a;
 }
 
 static bool checkFunc(RCore *core) {
@@ -1792,6 +1857,12 @@ static int gameCb(void *user) {
 	return 0;
 }
 
+static int screenLock(void *user) {
+	RCore *core = (RCore *)user;
+	r_core_cmd0 (core, "LL");
+	return 0;
+}
+
 static int licenseCb(void *user) {
 	r_cons_message ("Copyright 2006-2018 - pancake - LGPL");
 	return 0;
@@ -1851,18 +1922,17 @@ static int openMenuCb (void *user) {
 
 static void addMenu(RCore *core, const char *parent, const char *name, RPanelsMenuCallback cb) {
 	RPanels *panels = core->panels;
-	RPanelsMenuItem *item = R_NEW0 (RPanelsMenuItem);
-	RPanelsMenuItem *p_item;
-	if (parent) {
-		ut64 addr = r_num_math (core->num, ht_find (panels->mht, parent, NULL));
-		p_item = (RPanelsMenuItem *)addr;
-		ht_insert (panels->mht, sdb_fmt ("%s.%s", parent, name), sdb_fmt ("%p", item));
-	} else {
-		p_item = panels->panelsMenu->root;
-		ht_insert (panels->mht, sdb_fmt ("%s", name), sdb_fmt ("%p", item));
-	}
+	RPanelsMenuItem *p_item, *item = R_NEW0 (RPanelsMenuItem);
 	if (!item) {
 		return;
+	}
+	if (parent) {
+		void *addr = ht_pp_find (panels->mht, parent, NULL);
+		p_item = (RPanelsMenuItem *)addr;
+		ht_pp_insert (panels->mht, sdb_fmt ("%s.%s", parent, name), item);
+	} else {
+		p_item = panels->panelsMenu->root;
+		ht_pp_insert (panels->mht, sdb_fmt ("%s", name), item);
 	}
 	item->n_sub = 0;
 	item->selectedIndex = 0;
@@ -1872,6 +1942,7 @@ static void addMenu(RCore *core, const char *parent, const char *name, RPanelsMe
 	item->p = R_NEW0 (RPanel);
 	if (!item->p) {
 		free (item);
+		return;
 	}
 	p_item->n_sub++;
 	struct r_panels_menu_item **sub = realloc (p_item->sub, sizeof (RPanelsMenuItem *) * p_item->n_sub);
@@ -2063,6 +2134,8 @@ static bool initPanelsMenu(RCore *core) {
 			addMenu (core, parent, menus_Help[i], gameCb);
 		} else if (!strcmp (menus_Help[i], "License")) {
 			addMenu (core, parent, menus_Help[i], licenseCb);
+		} else if (!strcmp (menus_Help[i], "Lock Screen")) {
+			addMenu (core, parent, menus_Help[i], screenLock);
 		} else if (!strcmp (menus_Help[i], "About")) {
 			addMenu (core, parent, menus_Help[i], aboutCb);
 		}
@@ -2314,7 +2387,7 @@ static void initSdb(RPanels *panels) {
 	sdb_set (panels->db, "New", "o", 0);
 }
 
-static void mht_free_kv(HtKv *kv) {
+static void mht_free_kv(HtPPKv *kv) {
 	free (kv->key);
 	free (kv->value);
 }
@@ -2332,9 +2405,9 @@ static bool init(RCore *core, RPanels *panels, int w, int h) {
 	panels->isResizing = false;
 	panels->can = createNewCanvas (core, w, h);
 	panels->db = sdb_new0 ();
-	panels->mht = ht_new ((DupValue)strdup, (HtKvFreeFunc)mht_free_kv, (CalcSize)strlen);
+	panels->mht = ht_pp_new (NULL, (HtPPKvFreeFunc)mht_free_kv, (HtPPCalcSizeV)strlen);
 	panels->mode = PANEL_MODE_DEFAULT;
-	panels->prevMode = PANEL_MODE_NONE;
+	panels->prevMode = PANEL_MODE_DEFAULT;
 	initSdb (panels);
 
 	if (w < 140) {
@@ -2436,7 +2509,7 @@ static void handleMenu(RCore *core, const int key, int *exit) {
 		}
 		break;
 	case '?':
-		showHelp(core);
+		showHelp (core, panels->mode);
 		break;
 	}
 }
@@ -2594,7 +2667,7 @@ static void toggleZoomMode(RPanels *panels) {
 		maximizePanelSize (panels);
 	} else {
 		panels->mode = panels->prevMode;
-		panels->prevMode = PANEL_MODE_NONE;
+		panels->prevMode = PANEL_MODE_DEFAULT;
 		restorePanelPos (curPanel);
 		setRefreshAll (panels);
 	}
@@ -2606,18 +2679,33 @@ static void toggleWindowMode(RPanels *panels) {
 		panels->mode = PANEL_MODE_WINDOW;
 	} else {
 		panels->mode = panels->prevMode;
-		panels->prevMode = PANEL_MODE_NONE;
+		panels->prevMode = PANEL_MODE_DEFAULT;
 	}
 }
 
-static void showHelp(RCore *core) {
+static void showHelp(RCore *core, RPanelsMode mode) {
 	RStrBuf *p = r_strbuf_new (NULL);
 	if (!p) {
 		return;
 	}
 	r_cons_clear00 ();
-	r_core_visual_append_help (p, "Visual Ascii Art Panels", help_msg_panels);
-	r_core_visual_append_help (p, "Window management", help_msg_panels_window);
+	const char *title;
+	const char **msg;
+	switch (mode) {
+		case PANEL_MODE_WINDOW:
+			title = "Panels Window mode help";
+			msg = help_msg_panels_window;
+			break;
+		case PANEL_MODE_ZOOM:
+			title = "Panels Zoom mode help";
+			msg = help_msg_panels_zoom;
+			break;
+		default:
+			title = "Visual Ascii Art Panels";
+			msg = help_msg_panels;
+			break;
+	}
+	r_core_visual_append_help (p, title, msg);
 	int ret = r_cons_less_str (r_strbuf_get (p), "?");
 	r_strbuf_free (p);
 	if (ret == '?') {
@@ -2669,7 +2757,7 @@ R_API void r_core_panels_free(RPanels *panels) {
 		freeAllPanels (panels);
 		r_cons_canvas_free (panels->can);
 		sdb_free (panels->db);
-		ht_free (panels->mht);
+		ht_pp_free (panels->mht);
 		free (panels);
 	}
 }
@@ -2875,7 +2963,7 @@ repeat:
 		}
 		break;
 	case '?':
-		showHelp(core);
+		showHelp (core, panels->mode);
 		break;
 	case 'b':
 		r_core_visual_browse (core);
@@ -2963,12 +3051,12 @@ repeat:
 	case 'k':
 		handleUpKey (core);
 		break;
-	case '<':
+	case 'K':
 		for (i = 0; i < PANEL_CONFIG_PAGE; i++) {
 			handleUpKey (core);
 		}
 		break;
-	case '>':
+	case 'J':
 		for (i = 0; i < PANEL_CONFIG_PAGE; i++) {
 			handleDownKey (core);
 		}
@@ -2981,7 +3069,7 @@ repeat:
 		}
 		break;
 	case 'x':
-		r_core_visual_refs (core, true);
+		r_core_visual_refs (core, true, true);
 		core->panels->panel[core->panels->curnode].addr = core->offset;
 		setRefreshAll (panels);
 		break;
@@ -3024,22 +3112,6 @@ repeat:
 	case 'm':
 		panels->curnode = panels->menu_pos;
 		break;
-	case 'H':
-		r_cons_switchbuf (false);
-		resizePanelLeft (panels);
-		break;
-	case 'L':
-		r_cons_switchbuf (false);
-		resizePanelRight (panels);
-		break;
-	case 'J':
-		r_cons_switchbuf (false);
-		resizePanelDown(panels);
-		break;
-	case 'K':
-		r_cons_switchbuf (false);
-		resizePanelUp (panels);
-		break;
 	case 'g':
 		if (checkFunc (core)) {
 			replaceCmd (panels, PANEL_TITLE_GRAPH, PANEL_CMD_GRAPH);
@@ -3081,10 +3153,8 @@ repeat:
 		break;
 	case 'z':
 		if (panels->curnode > 0) {
-			RPanel p0 = panels->panel[0];
-			panels->panel[0] = panels->panel[panels->curnode];
-			panels->panel[panels->curnode] = p0;
-			r_core_panels_layout_refresh (core);
+			swapPanels (panels, 0, panels->curnode);
+			panels->curnode = 0;
 			setRefreshAll (panels);
 		}
 		break;

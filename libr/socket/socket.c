@@ -468,7 +468,7 @@ R_API int r_socket_close (RSocket *s) {
 R_API int r_socket_free (RSocket *s) {
 	int res = r_socket_close (s);
 #if HAVE_LIB_SSL
-	if (s->is_ssl) {
+	if (s && s->is_ssl) {
 		if (s->sfd) {
 			SSL_free (s->sfd);
 		}
@@ -886,11 +886,10 @@ R_API ut8* r_socket_slurp(RSocket *s, int *len) {
 			copied += rc;
 		}
 		ptr = realloc (buf, copied + blockSize);
-		if (ptr) {
-			buf = ptr;
-		} else {
+		if (!ptr) {
 			break;
 		}
+		buf = ptr;
 		if (rc < 1) {
 			break;
 		}

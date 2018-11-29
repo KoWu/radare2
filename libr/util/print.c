@@ -2,8 +2,8 @@
 
 #include "r_anal.h"
 #include "r_cons.h"
-#include "r_print.h"
 #include "r_util.h"
+#include "r_util/r_print.h"
 
 #define DFLT_ROWS 16
 
@@ -359,18 +359,25 @@ R_API void r_print_set_cursor(RPrint *p, int enable, int ocursor, int cursor) {
 	p->cur = cursor;
 }
 
-R_API void r_print_cursor(RPrint *p, int cur, int set) {
+R_API bool r_print_have_cursor(RPrint *p, int cur) {
 	if (!p || !p->cur_enabled) {
-		return;
+		return false;
 	}
 	if (p->ocur != -1) {
 		int from = p->ocur;
 		int to = p->cur;
 		r_num_minmax_swap_i (&from, &to);
 		if (cur >= from && cur <= to) {
-			p->cb_printf ("%s", R_CONS_INVERT (set, 1));
+			return true;
 		}
 	} else if (cur == p->cur) {
+		return true;
+	}
+	return false;
+}
+
+R_API void r_print_cursor(RPrint *p, int cur, int set) {
+	if (r_print_have_cursor (p, cur)) {
 		p->cb_printf ("%s", R_CONS_INVERT (set, 1));
 	}
 }
@@ -709,7 +716,9 @@ R_API void r_print_hexii(RPrint *rp, ut64 addr, const ut8 *buf, int len, int ste
 R_API void r_print_set_screenbounds(RPrint *p, ut64 addr) {
 	int r, rc;
 
-	if (!p || !p->screen_bounds) {
+	r_return_if_fail (p);
+
+	if (!p->screen_bounds) {
 		return;
 	}
 	if (!p->consbind.get_size) {
@@ -719,11 +728,13 @@ R_API void r_print_set_screenbounds(RPrint *p, ut64 addr) {
 		return;
 	}
 
-	(void) p->consbind.get_size (&r);
-	(void) p->consbind.get_cursor (&rc);
+	if (p->screen_bounds == 1) {
+		(void)p->consbind.get_size (&r);
+		(void)p->consbind.get_cursor (&rc);
 
-	if (rc > r - 1 && p->screen_bounds == 1) {
-		p->screen_bounds = addr;
+		if (rc > r - 1) {
+			p->screen_bounds = addr;
+		}
 	}
 }
 
@@ -915,11 +926,19 @@ R_API void r_print_hexdump(RPrint *p, ut64 addr, const ut8 *buf, int len, int ba
 		if (use_offset) {
 			r_print_addr (p, addr + j * zoomsz);
 		}
+		int row_have_cursor = -1;
+		ut64 row_have_addr = UT64_MAX;
 		if (use_hexa) {
 			if (!compact) {
 				printfmt ((col == 1)? "|": " ");
 			}
 			for (j = i; j < i + inc; j++) {
+				if (row_have_cursor == -1) {
+					if (r_print_have_cursor (p, j)) {
+						row_have_cursor = j - i;
+						row_have_addr = addr + j;
+					}
+				}
 				if (!compact && j >= len) {
 					if (col == 1) {
 						if (j + 1 >= inc + i) {
@@ -951,6 +970,11 @@ R_API void r_print_hexdump(RPrint *p, ut64 addr, const ut8 *buf, int len, int ba
 						sz_n = step == 2? sizeof (ut16): sizeof (ut32);
 					}
 					sz_n = R_MIN (left, sz_n);
+					if (j + sz_n > len) {
+						// oob
+						j += sz_n;
+						continue;
+					}
 					r_mem_swaporcopy ((ut8 *) &n, buf + j, sz_n, p && p->big_endian);
 					r_print_cursor (p, j, 1);
 					// stub for colors
@@ -1078,6 +1102,27 @@ R_API void r_print_hexdump(RPrint *p, ut64 addr, const ut8 *buf, int len, int ba
 			}
 		}
 		printfmt ("\n");
+
+		if (p && p->cfmt && *p->cfmt) {
+			if (row_have_cursor != -1) {
+				int i=0;
+				printfmt (" _________");
+				if (!compact) {
+					printfmt ("_");
+				}
+				for (i = 0; i < row_have_cursor; i++) {
+					if (!pairs || (!compact && i % 2)) {
+						printfmt ("___");
+					} else {
+						printfmt ("__");
+					}
+				}
+				printfmt ("__|\n");
+				printfmt ("| cmd.hexcursor = %s\n", p->cfmt);
+				p->coreb.cmdf (p->coreb.core,
+						"%s @ 0x%08"PFMT64x, p->cfmt, row_have_addr);
+			}
+		}
 	}
 }
 
@@ -1095,7 +1140,6 @@ static const char* getbytediff(char *fmt, ut8 a, ut8 b) {
 	} else {
 		sprintf (fmt, "%02x", a);
 	}
-	// else sprintf (fmt, "%02x", a);
 	return fmt;
 }
 
@@ -1692,7 +1736,8 @@ R_API char* r_print_colorize_opcode(RPrint *print, char *p, const char *reg, con
 	memset (o, 0, COLORIZE_BUFSIZE);
 	for (i = j = 0; p[i]; i++, j++) {
 		/* colorize numbers */
-		if ((ishexprefix (&p[i]) && previous != ':') || (isdigit (p[i]) && issymbol (previous))) {
+		if ((ishexprefix (&p[i]) && previous != ':') \
+		     || (isdigit ((ut8)p[i]) && issymbol (previous))) {
 			int nlen = strlen (num);
 			if (nlen + j >= sizeof (o)) {
 				eprintf ("Colorize buffer is too small\n");

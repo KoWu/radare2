@@ -39,13 +39,14 @@ static const char *help_msg_i[] = {
 	"iM", "", "Show main address",
 	"io", " [file]", "Load info from file (or last opened) use bin.baddr",
 	"iO", "[?]", "Perform binary operation (dump, resize, change sections, ...)",
-	"ir", "", "Relocs",
-	"iR", "", "Resources",
-	"is", "", "Symbols",
+	"ir", "", "List the Relocations",
+	"iR", "", "List the Resources",
+	"is", "", "List the Symbols",
 	"is.", "", "Current symbol",
 	"iS ", "[entropy,sha1]", "Sections (choose which hash algorithm to use)",
 	"iS.", "", "Current section",
-	"iSS", " [entropy,sha1]", "Segments",
+	"iS=", "", "Show ascii-art color bars with the section ranges",
+	"iSS", "", "List memory segments (maps with om)",
 	"iV", "", "Display file version info",
 	"iX", "", "Display source files used (via dwarf)",
 	"iz|izj", "", "Strings in data sections (in JSON/Base64)",
@@ -169,7 +170,7 @@ static void r_core_file_info(RCore *core, int mode) {
 			}
 		}
 		{
-			char *escapedFile = r_str_utf16_encode (uri, -1);
+			char *escapedFile = r_str_escape_utf8_to_json (uri, -1);
 			r_cons_printf ("\"file\":\"%s\"", escapedFile);
 			free (escapedFile);
 		}
@@ -180,12 +181,10 @@ static void r_core_file_info(RCore *core, int mode) {
 			ut64 fsz = r_io_desc_size (desc);
 			r_cons_printf (",\"fd\":%d", desc->fd);
 			if (fsz != UT64_MAX) {
+				char humansz[8];
 				r_cons_printf (",\"size\":%"PFMT64d, fsz);
-				char *humansz = r_num_units (NULL, fsz);
-				if (humansz) {
-					r_cons_printf (",\"humansz\":\"%s\"", humansz);
-					free (humansz);
-				}
+				r_num_units (humansz, sizeof (humansz), fsz);
+				r_cons_printf (",\"humansz\":\"%s\"", humansz);
 			}
 			r_cons_printf (",\"iorw\":%s", r_str_bool ( io_cache || desc->perm & R_PERM_W));
 			r_cons_printf (",\"mode\":\"%s\"", r_str_rwx_i (desc->perm & R_PERM_RWX));
@@ -237,12 +236,10 @@ static void r_core_file_info(RCore *core, int mode) {
 		if (desc) {
 			ut64 fsz = r_io_desc_size (desc);
 			if (fsz != UT64_MAX) {
+				char humansz[8];
 				pair ("size", sdb_itoca (fsz));
-				char *humansz = r_num_units (NULL, fsz);
-				if (humansz) {
-					pair ("humansz", humansz);
-					free (humansz);
-				}
+				r_num_units (humansz, sizeof (humansz), fsz);
+				pair ("humansz", humansz);
 			}
 		}
 		if (info) {
@@ -348,6 +345,12 @@ static int cmd_info(void *data, const char *input) {
 	/* i* is an alias for iI* */
 	if (!strcmp (input, "*")) {
 		input = "I*";
+	}
+	char *question = strchr (input, '?');
+	if (question > input) {
+		question--;
+		r_core_cmdf (core, "i?~ i%c", *question);
+		goto done;
 	}
 	while (*input) {
 		switch (*input) {
@@ -480,8 +483,12 @@ static int cmd_info(void *data, const char *input) {
 					action = R_CORE_BIN_ACC_SEGMENTS;
 					param_shift = 1;
 				}
-				// case for iSj.
-				if (input[1] == 'j' && input[2] == '.') {
+				// case for iS=
+				if (input[1] == '=') {
+					mode = R_MODE_EQUAL;
+				} else if (input[1] == 'q' && input[2] == '.') {
+					mode = R_MODE_SIMPLE;
+				} else if (input[1] == 'j' && input[2] == '.') {
 					mode = R_MODE_JSON;
 				}
 				RBinObject *obj = r_bin_cur_object (core->bin);

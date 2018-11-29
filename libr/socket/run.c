@@ -47,7 +47,7 @@
 #endif
 #if defined(__APPLE__) || defined(__NetBSD__) || defined(__OpenBSD__)
 #include <util.h>
-#elif defined(__FreeBSD__)
+#elif defined(__FreeBSD__) || defined(__DragonFly__)
 #include <libutil.h>
 #endif
 #endif
@@ -548,7 +548,9 @@ R_API bool r_run_parseline(RRunProfile *p, char *b) {
 			return false;
 		}
 		for (;;) {
-			fgets (buf, sizeof (buf) - 1, fd);
+			if (!fgets (buf, sizeof (buf) - 1, fd)) {
+				break;
+			}
 			if (feof (fd)) {
 				break;
 			}
@@ -937,9 +939,13 @@ R_API int r_run_config_env(RRunProfile *p) {
 	if (p->_input) {
 		char *inp;
 		int f2[2];
-		pipe (f2);
-		close (0);
-		dup2 (f2[0], 0);
+		if (pipe (f2) != -1) {
+			close (0);
+			dup2 (f2[0], 0);
+		} else {
+			eprintf ("[ERROR] rarun2: Cannot create pipe\n");
+			return 1;
+		}
 		inp = getstr (p->_input);
 		if (inp) {
 			write (f2[1], inp, strlen (inp));

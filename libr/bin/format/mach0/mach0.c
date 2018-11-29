@@ -13,7 +13,7 @@ typedef struct _ulebr {
 } ulebr;
 
 // OMG; THIS SHOULD BE KILLED; this var exposes the local native endian, which is completely unnecessary
-static bool little_ = false;
+#define mach0_endian 1
 
 static ut64 read_uleb128(ulebr *r, ut8 *end) {
 	ut64 result = 0;
@@ -713,9 +713,9 @@ static bool parse_signature(struct MACH0_(obj_t) *bin, ut64 off) {
 		bin->signature = (ut8 *)strdup ("Malformed entitlement");
 		return true;
 	}
-	super.blob.magic = r_read_ble32 (bin->b->buf + data, little_);
-	super.blob.length = r_read_ble32 (bin->b->buf + data + 4, little_);
-	super.count = r_read_ble32 (bin->b->buf + data + 8, little_);
+	super.blob.magic = r_read_ble32 (bin->b->buf + data, mach0_endian);
+	super.blob.length = r_read_ble32 (bin->b->buf + data + 4, mach0_endian);
+	super.count = r_read_ble32 (bin->b->buf + data + 8, mach0_endian);
 	char *verbose = r_sys_getenv ("RABIN2_CODESIGN_VERBOSE");
 	bool isVerbose = false;
 	if (verbose) {
@@ -737,8 +737,8 @@ static bool parse_signature(struct MACH0_(obj_t) *bin, ut64 off) {
 			(ut8*)&bi, sizeof (struct blob_index_t)) < sizeof (struct blob_index_t)) {
 			break;
 		}
-		idx.type = r_read_ble32 (&bi.type, little_);
-		idx.offset = r_read_ble32 (&bi.offset, little_);
+		idx.type = r_read_ble32 (&bi.type, mach0_endian);
+		idx.offset = r_read_ble32 (&bi.offset, mach0_endian);
 		switch (idx.type) {
 		case CSSLOT_ENTITLEMENTS:
 			if (true || isVerbose) {
@@ -748,8 +748,8 @@ static bool parse_signature(struct MACH0_(obj_t) *bin, ut64 off) {
 				break;
 			}
 			struct blob_t entitlements = {0};
-			entitlements.magic = r_read_ble32 (bin->b->buf + off, little_);
-			entitlements.length = r_read_ble32 (bin->b->buf + off + 4, little_);
+			entitlements.magic = r_read_ble32 (bin->b->buf + off, mach0_endian);
+			entitlements.length = r_read_ble32 (bin->b->buf + off + 4, mach0_endian);
 			len = entitlements.length - sizeof (struct blob_t);
 			if (len <= bin->size && len > 1) {
 				bin->signature = calloc (1, len + 1);
@@ -1336,8 +1336,7 @@ static int init_items(struct MACH0_(obj_t)* bin) {
 		case LC_LOAD_DYLINKER:
 			{
 				sdb_set (bin->kv, sdb_fmt ("mach0_cmd_%d.cmd", i), "dylinker", 0);
-				free (bin->intrp);
-				bin->intrp = NULL;
+				R_FREE (bin->intrp);
 				//bprintf ("[mach0] load dynamic linker\n");
 				struct dylinker_command dy = {0};
 				ut8 sdy[sizeof (struct dylinker_command)] = {0};
@@ -1431,8 +1430,7 @@ static int init_items(struct MACH0_(obj_t)* bin) {
 					return false;
 				}
 				if (r_buf_read_at (bin->b, off, dyldi, sizeof (struct dyld_info_command)) == -1) {
-					free (bin->dyld_info);
-					bin->dyld_info = NULL;
+					R_FREE (bin->dyld_info);
 					bprintf ("Error: read (LC_DYLD_INFO) at 0x%08"PFMT64x"\n", off);
 				} else {
 					bin->dyld_info->cmd = r_read_ble32 (&dyldi[0], bin->big_endian);
@@ -1486,11 +1484,6 @@ static int init_items(struct MACH0_(obj_t)* bin) {
 }
 
 static int init(struct MACH0_(obj_t)* bin) {
-	union {
-		ut16 word;
-		ut8 byte[2];
-	} endian = { 1 };
-	little_ = endian.byte[0];
 	if (!init_hdr (bin)) {
 		bprintf ("Warning: File is not MACH0\n");
 		return false;
@@ -1743,14 +1736,14 @@ static int parse_import_stub(struct MACH0_(obj_t)* bin, struct symbol_t *symbol,
 	return false;
 }
 
-static int inSymtab(SdbHt *hash, const char *name, ut64 addr) {
+static int inSymtab(HtPP *hash, const char *name, ut64 addr) {
 	bool found;
 	const char *key = sdb_fmt ("%s.%"PFMT64x, name, addr);
-	(void)sdb_ht_find (hash, key, &found);
+	ht_pp_find (hash, key, &found);
 	if (found) {
 		return true;
 	}
-	sdb_ht_insert (hash, key, "1");
+	ht_pp_insert (hash, key, "1");
 	return false;
 }
 
@@ -1782,7 +1775,10 @@ struct symbol_t* MACH0_(get_symbols)(struct MACH0_(obj_t)* bin) {
 	int j, s, stridx, symbols_size, symbols_count;
 	ut32 to, from, i;
 
-	r_return_val_if_fail (bin && bin->symtab && bin->symstr, NULL);
+	r_return_val_if_fail (bin, NULL);
+	if (!bin->symtab || !bin->symstr) {
+		return NULL;
+	}
 
 	/* parse dynamic symbol table */
 	symbols_count = (bin->dysymtab.nextdefsym + \
@@ -1797,7 +1793,7 @@ struct symbol_t* MACH0_(get_symbols)(struct MACH0_(obj_t)* bin) {
 	if (!(symbols = calloc (1, symbols_size))) {
 		return NULL;
 	}
-	SdbHt *hash = sdb_ht_new ();
+	HtPP *hash = ht_pp_new0 ();
 	if (!hash) {
 		free (symbols);
 		return NULL;
@@ -1831,7 +1827,7 @@ struct symbol_t* MACH0_(get_symbols)(struct MACH0_(obj_t)* bin) {
 		if (to > 0x500000) {
 			bprintf ("WARNING: corrupted mach0 header: symbol table is too big %d\n", to);
 			free (symbols);
-			sdb_ht_free (hash);
+			ht_pp_free (hash);
 			return NULL;
 		}
 		if (symbols_count >= maxsymbols) {
@@ -1891,7 +1887,7 @@ struct symbol_t* MACH0_(get_symbols)(struct MACH0_(obj_t)* bin) {
 			}
 			char *sym_name = get_name (bin, stridx, false);
 			if (sym_name) {
-				strncpy (symbols[j].name, sym_name, R_BIN_MACH0_STRING_LENGTH);
+				r_str_ncpy (symbols[j].name, sym_name, R_BIN_MACH0_STRING_LENGTH);
 				free (sym_name);
 			} else {
 				symbols[j].name[0] = 0;
@@ -1905,7 +1901,7 @@ struct symbol_t* MACH0_(get_symbols)(struct MACH0_(obj_t)* bin) {
 			}
 		}
 	}
-	sdb_ht_free (hash);
+	ht_pp_free (hash);
 	symbols[j].last = 1;
 	return symbols;
 }
@@ -1959,7 +1955,10 @@ static int parse_import_ptr(struct MACH0_(obj_t)* bin, struct reloc_t *reloc, in
 struct import_t* MACH0_(get_imports)(struct MACH0_(obj_t)* bin) {
 	int i, j, idx, stridx;
 
-	r_return_val_if_fail (bin && bin->symtab && bin->symstr && bin->sects && bin->indirectsyms, NULL);
+	r_return_val_if_fail (bin && bin->sects, NULL);
+	if (!bin->symtab || !bin->symstr || !bin->indirectsyms) {
+		return NULL;
+	}
 
 	if (bin->dysymtab.nundefsym < 1 || bin->dysymtab.nundefsym > 0xfffff) {
 		return NULL;
@@ -2219,23 +2218,27 @@ beach:
 }
 
 struct addr_t* MACH0_(get_entrypoint)(struct MACH0_(obj_t)* bin) {
-	int i;
-	r_return_val_if_fail (bin && bin->entry && bin->sects, NULL);
+	r_return_val_if_fail (bin && bin->sects, NULL);
+
+	/* it's probably a dylib */
+	if (!bin->entry) {
+		return NULL;
+	}
 	
-	struct addr_t *entry = R_NEW0 (struct addr_t);;
+	struct addr_t *entry = R_NEW0 (struct addr_t);
 	if (!entry) {
 		return NULL;
 	}
-	if (bin->entry) {
-		entry->addr = entry_to_vaddr (bin);
-		entry->offset = addr_to_offset (bin, entry->addr);
-		entry->haddr = sdb_num_get (bin->kv, "mach0.entry.offset", 0);
-		sdb_num_set (bin->kv, "mach0.entry.vaddr", entry->addr, 0);
-		sdb_num_set (bin->kv, "mach0.entry.paddr", bin->entry, 0);
-	}
-	if (!bin->entry || entry->offset == 0) {
-		// XXX: section name doesnt matters at all.. just check for exec flags
+	entry->addr = entry_to_vaddr (bin);
+	entry->offset = addr_to_offset (bin, entry->addr);
+	entry->haddr = sdb_num_get (bin->kv, "mach0.entry.offset", 0);
+	sdb_num_set (bin->kv, "mach0.entry.vaddr", entry->addr, 0);
+	sdb_num_set (bin->kv, "mach0.entry.paddr", bin->entry, 0);
+
+	if (entry->offset == 0) {
+		int i;
 		for (i = 0; i < bin->nsects; i++) {
+			// XXX: section name shoudnt matter .. just check for exec flags
 			if (!strncmp (bin->sects[i].sectname, "__text", 6)) {
 				entry->offset = (ut64)bin->sects[i].offset;
 				sdb_num_set (bin->kv, "mach0.entry", entry->offset, 0);
@@ -2680,11 +2683,11 @@ void MACH0_(mach_headerfields)(RBinFile *file) {
 		addr += 4;
 	}
 	for (n = 0; n < mh->ncmds; n++) {
-		READWORD();
+		READWORD ();
 		int lcType = word;
 		eprintf ("0x%08"PFMT64x"  cmd %7d 0x%x %s\n",
 			addr, n, lcType, cmd_to_string (lcType));
-		READWORD();
+		READWORD ();
 		int lcSize = word;
 		word &= 0xFFFFFF;
 		printf ("0x%08"PFMT64x"  cmdsize     %d\n", addr, word);
@@ -2693,6 +2696,23 @@ void MACH0_(mach_headerfields)(RBinFile *file) {
 			break;
 		}
 		switch (lcType) {
+		case LC_MAIN:
+			{
+				ut8 data[64];
+				r_buf_read_at (buf, addr, data, sizeof (data));
+#if R_BIN_MACH064
+				ut64 ep = r_read_ble64 (&data, false); //  bin->big_endian);
+				printf ("0x%08"PFMT64x"  entry0      0x%" PFMT64x "\n", addr, ep);
+				ut64 ss = r_read_ble64 (&data[8], false); //  bin->big_endian);
+				printf ("0x%08"PFMT64x"  stacksize   0x%" PFMT64x "\n", addr +  8, ss);
+#else
+				ut32 ep = r_read_ble32 (&data, false); //  bin->big_endian);
+				printf ("0x%08"PFMT32x"  entry0      0x%" PFMT32x "\n", (ut32)addr, ep);
+				ut32 ss = r_read_ble32 (&data[4], false); //  bin->big_endian);
+				printf ("0x%08"PFMT32x"  stacksize   0x%" PFMT32x "\n", (ut32)addr +  4, ss);
+#endif
+			}
+			break;
 		case LC_ID_DYLIB: // install_name_tool
 			printf ("0x%08"PFMT64x"  id           %s\n",
 				addr + 20, r_buf_get_at (buf, addr + 20, NULL));
@@ -2731,6 +2751,7 @@ RList* MACH0_(mach_fields)(RBinFile *bf) {
 	}
 	RList *ret = r_list_new ();
 	if (!ret) {
+		free (mh);
 		return NULL;
 	}
 	ret->free = free;

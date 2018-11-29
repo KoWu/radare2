@@ -4,7 +4,7 @@
 #include "r_bin.h"
 #include "r_cons.h"
 #include "r_core.h"
-#include "r_print.h"
+#include "r_util.h"
 #include "r_types.h"
 #include "sdb/sdb.h"
 
@@ -388,8 +388,11 @@ static int cmd_meta_comment(RCore *core, const char *input) {
 		case 'j': // "CCfj"
 			r_meta_list_at (core->anal, R_META_TYPE_COMMENT, 'j', core->offset);
 			break;
+		case '*': // "CCf*"
+			r_meta_list_at (core->anal, R_META_TYPE_COMMENT, 1, core->offset);
+			break;
 		default:
-			r_meta_list_at (core->anal, R_META_TYPE_COMMENT, 'f', core->offset);
+			r_meta_list_at (core->anal, R_META_TYPE_COMMENT, 0, core->offset);
 			break;
 		}
 		break;

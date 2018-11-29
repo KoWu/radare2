@@ -1477,13 +1477,21 @@ static int analop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len
 		break;
 	case ARM_INS_BX:
 	case ARM_INS_BXJ:
-		r_strbuf_setf (&op->esil, "%s,pc,=", ARG(0));
+		{
+		const char *op1 = ARG (0);
+		if (!strcmp (op1, "pc")) {
+			r_strbuf_setf (&op->esil, "%d,$$,+,pc,=", pcdelta);
+		} else {
+			r_strbuf_setf (&op->esil, "%s,pc,=", ARG (0));
+		}
 		break;
+		}
 	case ARM_INS_UDF:
 		r_strbuf_setf (&op->esil, "%s,TRAP", ARG(0));
 		break;
 	case ARM_INS_SADD16:
 	case ARM_INS_SADD8:
+	case ARM_INS_ADDW:
 	case ARM_INS_ADD:
 		op->type = R_ANAL_OP_TYPE_ADD;
 		if (REGID(0) == ARM_REG_PC && insn->detail->arm.cc != ARM_CC_AL) {
@@ -1605,6 +1613,9 @@ r4,r5,r6,3,sp,[*],12,sp,+=
 		r_strbuf_appendf (&op->esil, "16,%s,<<,%s,|=", ARG(1), REG(0));
 		break;
 	case ARM_INS_ADR:
+		r_strbuf_appendf (&op->esil, "%d,$$,+,%s,+,0xfffffffc,&,%s,=",
+				  pcdelta, ARG(1), REG(0));
+		break;
 	case ARM_INS_MOV:
 	case ARM_INS_VMOV:
 	case ARM_INS_MOVW:
@@ -2503,6 +2514,7 @@ static ut64 lookahead(csh handle, const ut64 addr, const ut8 *buf, int len, int 
 
 static void anop32(RAnal *a, csh handle, RAnalOp *op, cs_insn *insn, bool thumb, const ut8 *buf, int len) {
 	const ut64 addr = op->addr;
+	const int pcdelta = thumb? 4 : 8;
 	int i;
 	op->cond = cond_cs2r2 (insn->detail->arm.cc);
 	if (op->cond == R_ANAL_COND_NV) {
@@ -2759,6 +2771,7 @@ jmp $$ + 4 + ( [delta] * 2 )
 			op->type = R_ANAL_OP_TYPE_CALL;
 			op->jump = IMM(0) & UT32_MAX;
 			op->fail = addr + op->size;
+			op->hint.new_bits = a->bits;
 		}
 		break;
 	case ARM_INS_CBZ:
@@ -2785,6 +2798,8 @@ jmp $$ + 4 + ( [delta] * 2 )
 			op->fail = addr+op->size;
 		}
 		op->jump = IMM(0) & UT32_MAX;
+		// propagate bits to create correctly hints ranges
+		op->hint.new_bits = a->bits;
 		break;
 	case ARM_INS_BX:
 	case ARM_INS_BXJ:
@@ -2797,6 +2812,12 @@ jmp $$ + 4 + ( [delta] * 2 )
 				break;
 			case ARM_REG_IP:
 				op->type = R_ANAL_OP_TYPE_UJMP;
+				break;
+			case ARM_REG_PC:
+				// bx pc is well known without ESIL
+				op->type = R_ANAL_OP_TYPE_UJMP;
+				op->jump = op->addr + pcdelta;
+				op->hint.new_bits = (a->bits == 32)? 16 : 32;
 				break;
 			default:
 				op->type = R_ANAL_OP_TYPE_UJMP;

@@ -170,7 +170,7 @@ static int r_line_readchar_utf8(ut8 *s, int slen) {
 	} else {
 		return -1;
 	}
-	if (slen < len) {
+	if (len > slen) {
 		return -1;
 	}
 	for (i = 1; i < len; i++) {
@@ -372,8 +372,7 @@ R_API void r_line_hist_free() {
 	int i;
 	if (I.history.data) {
 		for (i = 0; i < I.history.size; i++) {
-			free (I.history.data[i]);
-			I.history.data[i] = NULL;
+			R_FREE (I.history.data[i]);
 		}
 	}
 	R_FREE (I.history.data);

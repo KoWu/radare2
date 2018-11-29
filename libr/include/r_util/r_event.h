@@ -7,10 +7,12 @@
 extern "C" {
 #endif
 
+#include <sdb/ht_up.h>
+
 typedef struct r_event_t {
 	void *user;
 	bool incall;
-	SdbHt *callbacks;
+	HtUP *callbacks;
 } REvent;
 
 typedef enum {
@@ -32,5 +34,9 @@ R_API void r_event_free(REvent *ev);
 R_API void r_event_hook(REvent *ev, REventType type, REventCallback cb);
 R_API void r_event_unhook(REvent *ev, REventType type, REventCallback cb);
 R_API void r_event_send(REvent *ev, REventType type, void *data);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

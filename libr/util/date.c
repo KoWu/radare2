@@ -1,11 +1,7 @@
-/* radare - LGPL - Copyright 2007-2015 - pancake */
+/* radare - LGPL - Copyright 2007-2018 - pancake */
 
-#include "r_print.h"
 #include "r_util.h"
-#include <unistd.h>
-#include <sys/time.h>
-#include <time.h>
-#include <sys/stat.h>
+#include "r_util/r_print.h"
 
 R_API int r_print_date_dos(RPrint *p, const ut8 *buf, int len) {
 	ut8 _time[2] = { buf[0], buf[1] };
@@ -33,6 +29,7 @@ R_API int r_print_date_hfs(RPrint *p, const ut8 *buf, int len) {
 	char s[256];
 	int ret = 0;
 	const struct tm* time;
+	struct tm timestruct;
 
 	if (p && len >= sizeof (ut32)) {
 		t = r_read_ble32 (buf, p->big_endian);
@@ -40,7 +37,7 @@ R_API int r_print_date_hfs(RPrint *p, const ut8 *buf, int len) {
 		if (p->datefmt[0]) {
 			t += p->datezone * (60*60);
 			t += hfs_unix_delta;
-			time = (const struct tm*)gmtime((const time_t*)&t);
+			time = (const struct tm*)gmtime_r((const time_t*)&t, &timestruct);
 			if (time) {
 				ret = strftime (s, sizeof (s), p->datefmt, time);
 				if (ret) {
@@ -60,13 +57,14 @@ R_API int r_print_date_unix(RPrint *p, const ut8 *buf, int len) {
 	char s[256];
 	int ret = 0;
 	const struct tm* time;
+	struct tm timestruct;
 
 	if (p && len >= sizeof (ut32)) {
 		t = r_read_ble32 (buf, p->big_endian);
 		// "%d:%m:%Y %H:%M:%S %z",
 		if (p->datefmt[0]) {
 			t += p->datezone * (60*60);
-			time = (const struct tm*)gmtime((const time_t*)&t);
+			time = (const struct tm*)gmtime_r((const time_t*)&t, &timestruct);
 			if (time) {
 				ret = strftime (s, sizeof (s), p->datefmt, time);
 				if (ret) {
@@ -131,8 +129,9 @@ R_API int r_print_date_w32(RPrint *p, const ut8 *buf, int len) {
 		t = (time_t) l; // TODO limit above!
 		// "%d:%m:%Y %H:%M:%S %z",
 		if (p->datefmt[0]) {
+			struct tm time;
 			ret = strftime(datestr, 256, p->datefmt,
-				(const struct tm*) gmtime((const time_t*)&t));
+				(const struct tm*) gmtime_r ((const time_t*)&t, &time));
 			if (ret) {
 				p->cb_printf("%s\n", datestr);
 				ret = true;
@@ -141,4 +140,40 @@ R_API int r_print_date_w32(RPrint *p, const ut8 *buf, int len) {
 	}
 
 	return ret;
+}
+
+R_API const char *r_time_to_string (ut64 ts) {
+	static char str[128];
+#if __UNIX__
+        struct tm curt; /* current time */
+        time_t l;
+        char *week_str[7]= {
+		"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+        char *month_str[12]= {
+		"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+		"Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+
+        *str = 0;
+        l = ts >> 20;
+        localtime_r (&l, &curt);
+	// XXX localtime is affected by the timezone. 
+
+        if ((curt.tm_wday >= 0 && curt.tm_wday < 7)
+        &&  (curt.tm_mon >= 0 && curt.tm_mon < 12)) {
+		sprintf (str, "%s, %02d %s %d %02d:%02d:%02d GMT + %d",
+			week_str[curt.tm_wday],
+			curt.tm_mday,
+			month_str[curt.tm_mon],
+			curt.tm_year + 1900, curt.tm_hour,
+			curt.tm_min, curt.tm_sec, curt.tm_isdst);
+	}
+#else
+        *str = 0;
+#ifdef _MSC_VER
+#pragma message ("r_time_to_string NOT IMPLEMENTED FOR THIS PLATFORM")
+#else
+#warning r_time_to_string NOT IMPLEMENTED FOR THIS PLATFORM
+#endif
+#endif
+	return str;
 }

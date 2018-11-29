@@ -192,6 +192,7 @@ R_API int r_anal_var_retype(RAnal *a, ut64 addr, int scope, int delta, char kind
 }
 
 R_API int r_anal_var_delete_all(RAnal *a, ut64 addr, const char kind) {
+	r_return_val_if_fail (a, 0);
 	RAnalFunction *fcn = r_anal_get_fcn_in (a, addr, 0);
 	if (fcn) {
 		RAnalVar *v;
@@ -451,10 +452,10 @@ R_API int r_anal_var_rename(RAnal *a, ut64 addr, int scope, char kind, const cha
 }
 
 // Used for linking reg based arg and local-var like "mov [local_8h], rsi"
-static void r_anal_var_link (RAnal *a, ut64 addr, RAnalVar *var) {
-	const char *inst_key = sdb_fmt ("inst.0x%"PFMT64x ".lvar", addr);
-	const char *var_def = sdb_fmt ("0x%"PFMT64x ",%c,0x%x,0x%x", var->addr,
-			var->kind, var->scope, var->delta);
+static void r_anal_var_link(RAnal *a, ut64 addr, RAnalVar *var) {
+	const char *inst_key = sdb_fmt ("inst.0x%" PFMT64x ".lvar", addr);
+	const char *var_def = sdb_fmt ("0x%" PFMT64x ",%c,0x%x,0x%x", var->addr,
+		var->kind, var->scope, var->delta);
 	sdb_set (DB, inst_key, var_def, 0);
 }
 
@@ -571,7 +572,7 @@ static void var_add_structure_fields_to_list(RAnal *a, RAnalVar *av, const char 
 static char *get_varname(RAnal *a, RAnalFunction *fcn, char type, const char *pfx, int idx) {
 	char *varname = r_str_newf ("%s_%xh", pfx, idx);
 	int i = 2;
-	char v_kind;
+	char v_kind = 0;
 	int v_delta = 0;
 	while (1) {
 		char *name_key = sdb_fmt ("var.0x%"PFMT64x ".%d.%s", fcn->addr, 1, varname);
@@ -609,12 +610,12 @@ static const char *get_regname(RAnal *anal, RAnalValue *value) {
 }
 
 static void extract_arg(RAnal *anal, RAnalFunction *fcn, RAnalOp *op, const char *reg, const char *sign, char type) {
-	char sigstr[16] = {0};
+	char sigstr[16] = { 0 };
 	st64 ptr;
 	char *addr;
-	if (!anal || !fcn || !op) {
-		return;
-	}
+
+	r_return_if_fail (anal && fcn && op);
+
 	snprintf (sigstr, sizeof (sigstr), ",%s,%s", reg, sign);
 	const char *op_esil = r_strbuf_get (&op->esil);
 	if (!op_esil) {
@@ -670,9 +671,13 @@ R_API void extract_rarg(RAnal *anal, RAnalOp *op, RAnalFunction *fcn, int *reg_s
 	const char *opdreg = NULL;
 	int i, argc = 0;
 
-	if (!anal || !op || !fcn) {
+	r_return_if_fail (anal && op && fcn);
+
+	if (!fcn->cc) {
+		R_LOG_DEBUG ("No calling convention for function '%s' to extract register arguments\n", fcn->name);
 		return;
 	}
+
 	char *fname = fcn->name;
 	Sdb *TDB = anal->sdb_types;
 	int max_count = r_anal_cc_max_arg (anal, fcn->cc);
@@ -734,11 +739,10 @@ R_API void extract_rarg(RAnal *anal, RAnalOp *op, RAnalFunction *fcn, int *reg_s
 }
 
 R_API void extract_vars(RAnal *anal, RAnalFunction *fcn, RAnalOp *op) {
-	if (!anal || !fcn || !op) {
-		return;
-	}
+	r_return_if_fail (anal && fcn && op);
+
 	const char *BP = anal->reg->name[R_REG_NAME_BP];
-	const char *SP =  anal->reg->name[R_REG_NAME_SP];
+	const char *SP = anal->reg->name[R_REG_NAME_SP];
 	extract_arg (anal, fcn, op, BP, "+", 'b');
 	extract_arg (anal, fcn, op, BP, "-", 'b');
 	extract_arg (anal, fcn, op, SP, "+", 's');

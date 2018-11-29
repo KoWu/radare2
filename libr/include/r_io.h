@@ -4,11 +4,8 @@
 #define R2_IO_H
 
 #include "r_list.h"
-#include <r_util/r_idpool.h>
-#include <r_util/r_cache.h>
-#include <r_util/r_buf.h>
+#include <r_util.h>
 #include "r_socket.h"
-#include "r_util.h"
 #include "r_vector.h"
 
 #define R_IO_SEEK_SET	0
@@ -31,9 +28,11 @@
 #if defined(__GLIBC__) && defined(__linux__)
 typedef enum __ptrace_request r_ptrace_request_t;
 typedef void * r_ptrace_data_t;
+#define R_PTRACE_NODATA NULL
 #else
 typedef int r_ptrace_request_t;
 typedef int r_ptrace_data_t;
+#define R_PTRACE_NODATA 0
 #endif
 #endif
 
@@ -258,6 +257,7 @@ typedef RIOSection *(*RIOSectionVgetSec) (RIO *io, ut64 vaddr);
 typedef RIOSection *(*RIOSectionAdd) (RIO *io, ut64 addr, ut64 vaddr, ut64 size, ut64 vsize, int rwx, const char *name, ut32 bin_id, int fd);
 #if HAVE_PTRACE
 typedef long (*RIOPtraceFn) (RIO *io, r_ptrace_request_t request, pid_t pid, void *addr, r_ptrace_data_t data);
+typedef void *(*RIOPtraceFuncFn) (RIO *io, void *(*func)(void *), void *user);
 #endif
 
 typedef struct r_io_bind_t {
@@ -291,6 +291,7 @@ typedef struct r_io_bind_t {
 	RIOSectionAdd section_add;
 #if HAVE_PTRACE
 	RIOPtraceFn ptrace;
+	RIOPtraceFuncFn ptrace_func;
 #endif
 } RIOBind;
 
@@ -435,16 +436,11 @@ R_API void r_io_section_fini (RIO *io);
 R_API int r_io_section_exists_for_id (RIO *io, ut32 id);
 R_API RIOSection *r_io_section_add (RIO *io, ut64 addr, ut64 vaddr, ut64 size, ut64 vsize, int rwx, const char *name, ut32 bin_id, int fd);
 R_API RIOSection *r_io_section_get_i (RIO *io, ut32 id);
-R_API int r_io_section_rm (RIO *io, ut32 id);
 R_API SdbList *r_io_section_bin_get (RIO *io, ut32 bin_id);
-R_API bool r_io_section_bin_rm (RIO *io, ut32 bin_id);
-R_API RIOSection *r_io_section_get_name (RIO *io, const char *name);
 R_API void r_io_section_cleanup (RIO *io);
 R_API SdbList *r_io_sections_get (RIO *io, ut64 addr);
 R_API SdbList *r_io_sections_vget (RIO *io, ut64 vaddr);
-R_API int r_io_section_set_archbits (RIO *io, ut32 id, const char *arch, int bits);
 R_API const char *r_io_section_get_archbits (RIO *io, ut64 vaddr, int *bits);
-R_API int r_io_section_bin_set_archbits (RIO *io, ut32 bin_id, const char *arch, int bits);
 R_API bool r_io_section_priorize (RIO *io, ut32 id);
 R_API bool r_io_section_priorize_bin (RIO *io, ut32 bin_id);
 R_API bool r_io_section_apply (RIO *io, ut32 id, RIOSectionApplyMethod method);
@@ -452,7 +448,6 @@ R_API bool r_io_section_apply_bin (RIO *io, ut32 bin_id, RIOSectionApplyMethod m
 R_API RIOSection* r_io_section_get(RIO *io, ut64 paddr);
 R_API RIOSection* r_io_section_vget(RIO *io, ut64 vaddr);
 R_API ut64 r_io_section_get_paddr_at(RIO *io, ut64 addr);
-R_API ut64 r_io_section_get_vaddr_at(RIO *io, ut64 addr);
 
 /* io/p_cache.c */
 R_API bool r_io_desc_cache_init (RIODesc *desc);
@@ -495,7 +490,6 @@ R_API bool r_io_use_fd (RIO *io, int fd);
 #define r_io_range_free(x)	free(x)
 
 /* io/ioutils.c */
-R_API bool r_io_create_mem_for_section(RIO *io, RIOSection *sec);
 R_API bool r_io_is_valid_offset (RIO *io, ut64 offset, int hasperm);
 R_API bool r_io_addr_is_mapped(RIO *io, ut64 vaddr);
 R_API bool r_io_read_i (RIO* io, ut64 addr, ut64 *val, int size, bool endian);
@@ -504,6 +498,7 @@ R_API bool r_io_write_i (RIO* io, ut64 addr, ut64 *val, int size, bool endian);
 #if HAVE_PTRACE
 R_API long r_io_ptrace(RIO *io, r_ptrace_request_t request, pid_t pid, void *addr, r_ptrace_data_t data);
 R_API pid_t r_io_ptrace_fork(RIO *io, void (*child_callback)(void *), void *child_callback_user);
+R_API void *r_io_ptrace_func(RIO *io, void *(*func)(void *), void *user);
 #endif
 
 extern RIOPlugin r_io_plugin_procpid;

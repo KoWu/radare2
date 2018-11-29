@@ -3,8 +3,6 @@
 #ifndef R2_ANAL_H
 #define R2_ANAL_H
 
-#define USE_DICT 1
-
 /* use sdb function storage */
 #define FCN_SDB 1
 /* use old refs and function storage */
@@ -59,13 +57,15 @@ typedef struct {
 	SdbForeachCallback cb;
 	void *user;
 	int count;
-	struct r_anal_type_function_t *fcn;
+	struct r_anal_function_t *fcn;
 } RAnalMetaUserItem;
 
 typedef struct r_anal_range_t {
 	ut64 from;
 	ut64 to;
 	int bits;
+	ut64 rb_max_addr;
+	RBNode rb;
 } RAnalRange;
 
 #define R_ANAL_UNMASK_TYPE(x) (x&R_ANAL_VAR_TYPE_SIZE_MASK)
@@ -194,8 +194,8 @@ enum {
 	R_ANAL_FQUALIFIER_VIRTUAL = 5,
 };
 
-/*--------------------Function Convnetions-----------*/
-//XXX dont use then in the future
+/*--------------------Function Conventions-----------*/
+//XXX dont use them in the future
 #define R_ANAL_CC_TYPE_STDCALL 0
 #define R_ANAL_CC_TYPE_PASCAL 1
 #define R_ANAL_CC_TYPE_FASTCALL 'A' // syscall
@@ -252,7 +252,7 @@ struct r_anal_attr_t {
 };
 
 typedef struct r_anal_fcn_store_t {
-	SdbHt *h;
+	HtPP *h;
 	RList *l;
 } RAnalFcnStore;
 
@@ -270,7 +270,7 @@ typedef struct r_anal_fcn_meta_t {
 /* Store various function information,
  * variables, arguments, refs and even
  * description */
-typedef struct r_anal_type_function_t {
+typedef struct r_anal_function_t {
 	char* name;
 	char* dsc; // For producing nice listings
 	ut32 _size;
@@ -590,11 +590,13 @@ typedef struct r_anal_callbacks_t {
 
 typedef struct r_anal_options_t {
 	int depth;
+	int graph_depth;
 	bool vars; //analyze local var and arguments
 	int cjmpref;
 	int jmpref;
 	int jmpabove;
 	bool ijmp;
+	bool jmpmid; // continue analysis after jmp into middle of insn
 	int followdatarefs;
 	int searchstringrefs;
 	int followbrokenfcnsrefs;
@@ -615,6 +617,11 @@ typedef enum {
 	R_ANAL_CPP_ABI_ITANIUM = 0,
 	R_ANAL_CPP_ABI_MSVC
 } RAnalCPPABI;
+
+typedef struct r_anal_hint_cb_t {
+	//add more cbs as needed
+	void (*on_bits) (struct r_anal_t *a, ut64 addr, int bits, bool set);
+} RHintCb;
 
 typedef struct r_anal_t {
 	char *cpu;
@@ -657,11 +664,8 @@ typedef struct r_anal_t {
 	Sdb *sdb_fmts;
 	Sdb *sdb_meta; // TODO: Future r_meta api
 	Sdb *sdb_zigns;
-
-#if USE_DICT
-	SdbHt *dict_refs;
-	SdbHt *dict_xrefs;
-#endif
+	HtUP *dict_refs;
+	HtUP *dict_xrefs;
 	bool recursive_noreturn;
 	RSpaces meta_spaces;
 	RSpaces zign_spaces;
@@ -677,7 +681,7 @@ typedef struct r_anal_t {
 	Sdb *sdb_vars; // globals?
 #endif
 	Sdb *sdb_hints; // OK
-	bool bits_hints_changed;
+	RHintCb hint_cbs;
 	Sdb *sdb_fcnsign; // OK
 	Sdb *sdb_cc; // calling conventions
 	//RList *hints; // XXX use better data structure here (slist?)
@@ -686,7 +690,8 @@ typedef struct r_anal_t {
 	RList *reflines;
 	RList *reflines2;
 	//RList *noreturn;
-	RList /*RAnalRange*/ *bits_ranges;
+	RBNode *rb_hints_ranges; // <RAnalRange>
+	bool merge_hints;
 	RListComparator columnSort;
 	int stackptr;
 	bool fillval;
@@ -896,7 +901,7 @@ typedef struct r_anal_state_type_t {
 	ut64 current_addr;
 	ut64 next_addr;
 	RList *bbs;
-	SdbHt *ht;
+	HtUP *ht;
 	ut64 ht_sz;
 	RAnalFunction *current_fcn;
 	RAnalOp *current_op;
@@ -1114,6 +1119,8 @@ typedef struct r_anal_esil_t {
 	Sdb *ops;
 	RIDStorage *sources;
 	SdbMini *interrupts;
+	//this is a disgusting workaround, because we have no ht-like storage without magic keys, that you cannot use, with int-keys
+	RAnalEsilInterrupt *intr0;
 	/* deep esil parsing fills this */
 	Sdb *stats;
 	Sdb *db_trace;
@@ -1311,6 +1318,7 @@ R_API int r_anal_bb_is_in_offset(RAnalBlock *bb, ut64 addr);
 R_API bool r_anal_bb_set_offset(RAnalBlock *bb, int i, ut16 v);
 R_API ut16 r_anal_bb_offset_inst(RAnalBlock *bb, int i);
 R_API ut64 r_anal_bb_opaddr_at(RAnalBlock *bb, ut64 addr);
+R_API bool r_anal_bb_op_starts_at(RAnalBlock *bb, ut64 addr);
 R_API RAnalBlock *r_anal_bb_get_failbb(RAnalFunction *fcn, RAnalBlock *bb);
 R_API RAnalBlock *r_anal_bb_get_jumpbb(RAnalFunction *fcn, RAnalBlock *bb);
 
@@ -1435,16 +1443,17 @@ R_API ut32 r_anal_fcn_contsize(const RAnalFunction *fcn);
 R_API ut32 r_anal_fcn_realsize(const RAnalFunction *fcn);
 R_API int r_anal_fcn_cc(RAnalFunction *fcn);
 R_API int r_anal_fcn_loops(RAnalFunction *fcn);
-R_API int r_anal_fcn_split_bb(RAnal *anal, RAnalFunction *fcn, RAnalBlock *bb, ut64 addr);
+R_API int r_anal_fcn_split_bb(RAnal *anal, RAnalFunction *fcn, RAnalBlock *bbi, ut64 addr);
 R_API int r_anal_fcn_bb_overlaps(RAnalFunction *fcn, RAnalBlock *bb);
 R_API RAnalVar *r_anal_fcn_get_var(RAnalFunction *fs, int num, int dir);
 R_API void r_anal_fcn_fit_overlaps (RAnal *anal, RAnalFunction *fcn);
 R_API void r_anal_trim_jmprefs(RAnal *anal, RAnalFunction *fcn);
+R_API void r_anal_del_jmprefs(RAnal *anal, RAnalFunction *fcn);
 R_API RAnalFunction *r_anal_fcn_next(RAnal *anal, ut64 addr);
 R_API char *r_anal_fcn_to_string(RAnal *a, RAnalFunction* fs);
 R_API int r_anal_str_to_fcn(RAnal *a, RAnalFunction *f, const char *_str);
 R_API int r_anal_fcn_count (RAnal *a, ut64 from, ut64 to);
-R_API RAnalBlock *r_anal_fcn_bbget_in(RAnalFunction *fcn, ut64 addr);
+R_API RAnalBlock *r_anal_fcn_bbget_in(const RAnal *anal, RAnalFunction *fcn, ut64 addr);
 R_API RAnalBlock *r_anal_fcn_bbget_at(RAnalFunction *fcn, ut64 addr);
 R_API bool r_anal_fcn_contains(RAnalFunction *fcn, ut64 addr);
 R_API bool r_anal_fcn_bbadd(RAnalFunction *fcn, RAnalBlock *bb);
@@ -1548,7 +1557,7 @@ R_API RList *r_anal_var_all_list(RAnal *anal, RAnalFunction *fcn);
 R_API RList *r_anal_var_list_dynamic(RAnal *anal, RAnalFunction *fcn, int kind);
 
 // calling conventions API
-R_API int r_anal_cc_exist (RAnal *anal, const char *convention);
+R_API bool r_anal_cc_exist (RAnal *anal, const char *convention);
 R_API const char *r_anal_cc_arg(RAnal *anal, const char *convention, int n);
 R_API int r_anal_cc_max_arg(RAnal *anal, const char *cc);
 R_API const char *r_anal_cc_ret(RAnal *anal, const char *convention);
@@ -1603,7 +1612,8 @@ R_API void r_meta_print(RAnal *a, RAnalMetaItem *d, int rad, bool show_full);
 
 /* hints */
 
-R_API void r_anal_build_range_on_hints (RAnal *a);
+R_API void r_anal_build_range_on_hints (RAnal *a, ut64 addr, int bits);
+R_API void r_anal_merge_hint_ranges(RAnal *a);
 //R_API void r_anal_hint_list (RAnal *anal, int mode);
 R_API RAnalHint *r_anal_hint_from_string(RAnal *a, ut64 addr, const char *str);
 R_API void r_anal_hint_del (RAnal *anal, ut64 addr, int size);
@@ -1638,6 +1648,10 @@ R_API void r_anal_hint_unset_ret(RAnal *a, ut64 addr);
 R_API void r_anal_hint_unset_offset(RAnal *a, ut64 addr);
 R_API void r_anal_hint_unset_jump(RAnal *a, ut64 addr);
 R_API void r_anal_hint_unset_fail(RAnal *a, ut64 addr);
+
+R_API int r_anal_hint_get_bits_at(RAnal *a, ut64 addr, const char *str);
+R_API int r_anal_range_tree_find_bits_at(RBNode *root, ut64 addr);
+
 R_API int r_anal_esil_eval(RAnal *anal, const char *str);
 
 /* switch.c APIs */

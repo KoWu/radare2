@@ -788,21 +788,10 @@ R_API int r_str_ccpy(char *dst, char *src, int ch) {
 }
 
 R_API char *r_str_word_get_first(const char *text) {
-	char *ret;
-	int len = 0;
 	for (; *text && IS_SEPARATOR (*text); text++) {
 		;
 	}
-	/* strdup */
-	len = strlen (text);
-	ret = (char *)malloc (len + 1);
-	if (!ret) {
-		eprintf ("Cannot allocate %d byte(s).\n", len+1);
-		return NULL;
-	}
-	strncpy (ret, text, len);
-	ret[len] = '\0';
-	return ret;
+	return strdup (text);
 }
 
 R_API const char *r_str_get(const char *str) {
@@ -885,15 +874,14 @@ R_API char *r_str_appendlen(char *ptr, const char *string, int slen) {
  * return: the pointer ptr resized to string size.
  */
 R_API char *r_str_append(char *ptr, const char *string) {
-	int slen, plen;
 	if (string && !ptr) {
 		return strdup (string);
 	}
 	if (!string) {
 		return ptr;
 	}
-	plen = strlen (ptr);
-	slen = strlen (string);
+	int plen = strlen (ptr);
+	int slen = strlen (string);
 	char *newptr = realloc (ptr, slen + plen + 1);
 	if (!newptr) {
 		free (ptr);
@@ -968,9 +956,8 @@ R_API char* r_str_replace(char *str, const char *key, const char *val, int g) {
 		newstr = realloc (str, slen + klen + 1);
 		if (!newstr) {
 			eprintf ("realloc fail\n");
-			free (str);
+			R_FREE (str);
 			free (scnd);
-			str = NULL;
 			break;
 		}
 		str = newstr;
@@ -1036,9 +1023,8 @@ R_API char* r_str_replace_thunked(char *str, char *clean, int *thunk, int clen,
 		newstr = realloc (str, slen + klen);
 		if (!newstr) {
 			eprintf ("realloc fail\n");
-			free (str);
+			R_FREE (str);
 			free (scnd);
-			str = NULL;
 			break;
 		}
 		str = newstr;
@@ -1210,20 +1196,16 @@ static void r_str_byte_escape(const char *p, char **dst, int dot_nl, bool defaul
 /* Internal function. dot_nl specifies wheter to convert \n into the
  * graphiz-compatible newline \l */
 static char *r_str_escape_(const char *buf, int dot_nl, bool parse_esc_seq, bool ign_esc_seq, bool show_asciidot, bool esc_bslash) {
-	char *new_buf, *q;
-	const char *p;
+	r_return_val_if_fail (buf, NULL);
 
-	if (!buf) {
-		return NULL;
-	}
 	/* Worst case scenario, we convert every byte to a single-char escape
 	 * (e.g. \n) if show_asciidot, or \xhh if !show_asciidot */
-	new_buf = malloc (1 + strlen (buf) * (show_asciidot ? 2 : 4));
+	char *new_buf = malloc (1 + strlen (buf) * (show_asciidot ? 2 : 4));
 	if (!new_buf) {
 		return NULL;
 	}
-	p = buf;
-	q = new_buf;
+	const char *p = buf;
+	char *q = new_buf;
 	while (*p) {
 		switch (*p) {
 		case 0x1b: // ESC
@@ -1543,9 +1525,14 @@ R_API int r_str_ansi_filter(char *str, char **out, int **cposs, int len) {
 	}
 
 	for (i = j = 0; i < len; i++) {
-		if ((i + 1) < len && tmp[i] == 0x1b && tmp[i + 1] == '[') {
-			for (i += 2; i < len && str[i] != 'J' && str[i] != 'm' && str[i] != 'H'; i++) {
+		if (tmp[i] == 0x1b) {
+			if ((i + 1) < len && tmp[i + 1] == '[') {
+				for (i += 2; i < len && str[i] != 'J' && str[i] != 'm' && str[i] != 'H'; i++) {
 				;
+				}
+			}
+			if (tmp[i + 1] == '#' && isdigit (tmp[i + 2])  && tmp[i + 3]) {
+				i += 3;
 			}
 		} else {
 			str[j] = tmp[i];
@@ -1798,6 +1785,27 @@ R_API char *r_str_arg_escape(const char *arg) {
 	}
 	str[dest_i] = '\0';
 	return realloc (str, (strlen(str)+1) * sizeof (char));
+}
+
+// Unescape the string arg to its original format
+R_API int r_str_arg_unescape(char *arg) {
+	int dest_i = 0, src_i = 0;
+	if (!arg) {
+		return 0;
+	}
+	for (src_i = 0; arg[src_i] != '\0'; src_i++) {
+		char c = arg[src_i];
+		if (c == '\\') {
+			if (arg[++src_i] == '\0') {
+				break;
+			}
+			arg[dest_i++] = arg[src_i];
+		} else {
+			arg[dest_i++] = c;
+		}
+	}
+	arg[dest_i] = '\0';
+	return dest_i;
 }
 
 R_API char **r_str_argv(const char *cmdline, int *_argc) {
@@ -2163,10 +2171,13 @@ R_API int r_str_utf16_to_utf8(ut8 *dst, int len_dst, const ut8 *src, int len_src
 	inend = in + inlen;
 	while ((in < inend) && (dst - outstart + 5 < len_dst)) {
 		if (little_endian) {
-			c= *in++;
+			c = *in++;
 		} else {
 			tmp = (ut8*) in;
 			c = *tmp++;
+			if (!c && !*tmp) {
+				break;
+			}
 			c = c | (((ut32)*tmp) << 8);
 			in++;
 		}
@@ -2254,6 +2265,7 @@ R_API char *r_str_utf16_decode(const ut8 *s, int len) {
 	return result;
 }
 
+// TODO: kill this completely, it makes no sense:
 R_API char *r_str_utf16_encode(const char *s, int len) {
 	int i;
 	char ch[4], *d, *od, *tmp;
@@ -2281,7 +2293,7 @@ R_API char *r_str_utf16_encode(const char *s, int len) {
 			*d++ = *s;
 		} else {
 			*d++ = '\\';
-		//	*d++ = '\\';
+			//	*d++ = '\\';
 			*d++ = 'u';
 			*d++ = '0';
 			*d++ = '0';
@@ -2297,6 +2309,10 @@ R_API char *r_str_utf16_encode(const char *s, int len) {
 		return NULL;
 	}
 	return tmp;
+}
+
+R_API char *r_str_escape_utf8_to_json(const char *s, int len) {
+	return r_str_escape_utf (s, len, R_STRING_ENC_UTF8, false, true);
 }
 
 // TODO: merge print inside rutil
@@ -3006,8 +3022,7 @@ R_API wchar_t* r_str_mb_to_wc_l(const char *buf, int len) {
 	fail = false;
 err_r_str_mb_to_wc:
 	if (fail) {
-		free (res_buf);
-		res_buf = NULL;
+		R_FREE (res_buf);
 	}
 	return res_buf;
 }
@@ -3035,8 +3050,7 @@ R_API char* r_str_wc_to_mb_l(const wchar_t *buf, int len) {
 	fail = false;
 err_r_str_wc_to_mb:
 	if (fail) {
-		free (res_buf);
-		res_buf = NULL;
+		R_FREE (res_buf);
 	}
 	return res_buf;
 }

@@ -5,8 +5,8 @@
 #include <getopt.c>
 #include <r_io.h>
 #include <r_hash.h>
+#include <r_util/r_print.h>
 #include <r_util.h>
-#include <r_print.h>
 #include <r_crypto.h>
 #include "../blob/version.c"
 

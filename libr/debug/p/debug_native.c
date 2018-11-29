@@ -50,7 +50,7 @@ static int r_debug_native_reg_write (RDebug *dbg, int type, const ut8* buf, int 
 #include <limits.h>
 #define R_DEBUG_REG_T struct reg
 #include "native/procfs.h"
-#if __KFBSD__
+#if __KFBSD__ || __DragonFly__
 #include <sys/user.h>
 #endif
 #include "native/procfs.h"
@@ -671,6 +671,15 @@ static RList *r_debug_native_pids (RDebug *dbg, int pid) {
 # define KP_PPID(x) (x)->p_ppid
 # define KP_UID(x) (x)->p_uid
 # define KINFO_PROC kinfo_proc
+#elif __DragonFly__
+# define KVM_OPEN_FLAG O_RDONLY
+# define KVM_GETPROCS(kd, opt, arg, cntptr) \
+	kvm_getprocs (kd, opt, arg, cntptr)
+# define KP_COMM(x) (x)->kp_comm
+# define KP_PID(x) (x)->kp_pid
+# define KP_PPID(x) (x)->kp_ppid
+# define KP_UID(x) (x)->kp_uid
+# define KINFO_PROC kinfo_proc
 #else
 # define KVM_OPEN_FLAG O_RDONLY
 # define KVM_GETPROCS(kd, opt, arg, cntptr) \
@@ -735,7 +744,7 @@ static RList *r_debug_native_threads (RDebug *dbg, int pid) {
 #endif
 }
 
-#if __sun || __NetBSD__ || __KFBSD__ || __OpenBSD__
+#if __sun || __NetBSD__ || __KFBSD__ || __OpenBSD__ || __DragonFly__
 
 //Function to read register from Linux, BSD, Android systems
 static int bsd_reg_read (RDebug *dbg, int type, ut8* buf, int size) {
@@ -809,7 +818,7 @@ static int r_debug_native_reg_read (RDebug *dbg, int type, ut8 *buf, int size) {
 	return xnu_reg_read (dbg, type, buf, size);
 #elif __linux__
 	return linux_reg_read (dbg, type, buf, size);
-#elif __sun || __NetBSD__ || __KFBSD__ || __OpenBSD__
+#elif __sun || __NetBSD__ || __KFBSD__ || __OpenBSD__ || __DragonFly__
 	return bsd_reg_read (dbg, type, buf, size);
 #else
 	#warning dbg-native not supported for this platform
@@ -843,7 +852,7 @@ static int r_debug_native_reg_write (RDebug *dbg, int type, const ut8* buf, int 
 		return w32_reg_write(dbg, type, buf, size);
 #elif __linux__
 		return linux_reg_write (dbg, type, buf, size);
-#elif __sun || __NetBSD__ || __KFBSD__ || __OpenBSD__
+#elif __sun || __NetBSD__ || __KFBSD__ || __OpenBSD__ || __DragonFly__
 		int ret = ptrace (PTRACE_SETREGS, dbg->pid,
 			(void*)(size_t)buf, sizeof (R_DEBUG_REG_T));
 		if (sizeof (R_DEBUG_REG_T) < size)
@@ -1427,8 +1436,10 @@ static int r_debug_native_drx (RDebug *dbg, int n, ut64 addr, int sz, int rwx, i
 	return false;
 }
 
+
 #if __linux__
 
+#if __arm__ || __arm64__ || __aarch64__
 #include <sys/prctl.h>
 #include <sys/uio.h>
 
@@ -1438,13 +1449,13 @@ static int r_debug_native_drx (RDebug *dbg, int n, ut64 addr, int sz, int rwx, i
 #define NT_ARM_HW_WATCH	0x403		/* ARM hardware watchpoint registers */
 #define NT_ARM_SYSTEM_CALL	0x404	/* ARM system call number */
 
-
-#if __arm__
-
 #ifndef PTRACE_GETHBPREGS
 #define PTRACE_GETHBPREGS 29
 #define PTRACE_SETHBPREGS 30
 #endif
+
+#if __arm__
+
 static bool ll_arm32_hwbp_set(pid_t pid, ut64 addr, int size, int wp, int type) {
 	const unsigned byte_mask = (1 << size) - 1;
 	//const unsigned type = 2; // Write.
@@ -1461,8 +1472,22 @@ static bool arm32_hwbp_add (RDebug *dbg, RBreakpoint* bp, RBreakpointItem *b) {
 static bool arm32_hwbp_del (RDebug *dbg, RBreakpoint *bp, RBreakpointItem *b) {
 	return false; // TODO: hwbp.del not yetimplemented
 }
+#else
+static bool ll_arm32_hwbp_set(pid_t pid, ut64 addr, int size, int wp, int type) {
+	return false;
+}
 
-#elif __arm64__ || __aarch64__
+static bool arm32_hwbp_add (RDebug *dbg, RBreakpoint* bp, RBreakpointItem *b) {
+	return false;
+}
+
+static bool arm32_hwbp_del (RDebug *dbg, RBreakpoint *bp, RBreakpointItem *b) {
+	return false;
+}
+#endif // PTRACE_GETHWBPREGS
+#endif // __arm
+
+#if __arm64__ || __aarch64__
 // type = 2 = write
 static volatile uint8_t var[96] __attribute__((__aligned__(32)));
 
@@ -1530,7 +1555,7 @@ static bool arm64_hwbp_del (RDebug *dbg, RBreakpoint *bp, RBreakpointItem *b) {
 	return ll_arm64_hwbp_del (dbg->pid, b->addr, b->size, 0, 1 | 2 | 4);
 }
 
-#endif
+#endif //  __arm64__
 #endif // __linux__
 
 /*

@@ -575,7 +575,7 @@ R_API bool r_debug_select(RDebug *dbg, int pid, int tid) {
 		tid = pid;
 	}
 	if (pid != -1 && tid != -1) {
-		if (pid != dbg->pid || tid != dbg->tid) {
+		if ((pid != dbg->pid || tid != dbg->tid) && dbg->verbose) {
 			eprintf ("= attach %d %d\n", pid, tid);
 		}
 	} else {
@@ -986,7 +986,7 @@ R_API int r_debug_step_over(RDebug *dbg, int steps) {
 static ut64 get_prev_instr(RDebug *dbg, ut64 from, ut64 to) {
 	int i, ret, bsize = 256;
 	int inc;
-	ut64 prev, at;
+	ut64 prev = 0, at;
 	RAnalOp aop = {0};
 	const int mininstrsz = r_anal_archinfo (dbg->anal, R_ANAL_ARCHINFO_MIN_OP_SIZE);
 	const int minopcode = R_MAX (1, mininstrsz);
@@ -1422,7 +1422,7 @@ R_API bool r_debug_continue_back(RDebug *dbg) {
 }
 static int show_syscall(RDebug *dbg, const char *sysreg) {
 	const char *sysname;
-	char regname[8];
+	char regname[32];
 	int reg, i, args;
 	RSyscallItem *si;
 	reg = (int)r_debug_reg_get (dbg, sysreg);

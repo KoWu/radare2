@@ -1,6 +1,7 @@
 /* radare - LGPL - Copyright 2013-2018 - pancake */
 
 #include <r_bin.h>
+#include "../i/private.h"
 #include "./cxx/demangle.h"
 
 static inline bool is_cxx_symbol (const char *name) {
@@ -83,9 +84,11 @@ R_API char *r_bin_demangle_cxx(RBinFile *binfile, const char *str, ut64 vaddr) {
 			}
 			if (nerd && *nerd) {
 				*nerd = 0;
-				RBinSymbol *sym = r_bin_class_add_method (binfile, out, nerd + 2, 0);
-				if (sym) {
-					sym->vaddr = vaddr;
+				if (binfile) {
+					RBinSymbol *sym = r_bin_class_add_method (binfile, out, nerd + 2, 0);
+					if (sym) {
+						sym->vaddr = vaddr;
+					}
 				}
 				*nerd = ':';
 			}

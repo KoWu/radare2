@@ -6,7 +6,17 @@ extern "C" {
 #endif
 
 #include <r_types.h>
-#include <r_util.h>
+#include <r_util/r_graph.h>
+#include <r_util/r_hex.h>
+#include <r_util/r_log.h>
+#include <r_util/r_num.h>
+#include <r_util/r_panels.h>
+#include <r_util/r_sandbox.h>
+#include <r_util/r_signal.h>
+#include <r_util/r_stack.h>
+#include <r_util/r_str.h>
+#include <r_util/r_sys.h>
+#include <r_util/r_file.h>
 #include <sdb.h>
 
 #include <stdio.h>
@@ -707,6 +717,7 @@ R_API void r_cons_print_clear(void);
 R_API void r_cons_zero(void);
 R_API void r_cons_highlight(const char *word);
 R_API void r_cons_clear(void);
+R_API void r_cons_clear_buffer(void);
 R_API void r_cons_clear00(void);
 R_API void r_cons_clear_line(int err);
 R_API void r_cons_fill_line(void);
@@ -727,6 +738,7 @@ R_API void r_cons_printf_list(const char *format, va_list ap);
 R_API void r_cons_strcat(const char *str);
 #define r_cons_print(x) r_cons_strcat (x)
 R_API void r_cons_println(const char* str);
+
 R_API void r_cons_strcat_justify(const char *str, int j, char c);
 R_API int r_cons_memcat(const char *str, int len);
 R_API void r_cons_newline(void);
@@ -746,7 +758,6 @@ R_API void r_cons_log_stub(const char *output, const char *funcname, const char 
 
 
 /* input */
-//R_API int  r_cons_fgets(char *buf, int len, int argc, const char **argv);
 R_API int r_cons_controlz(int ch);
 R_API int r_cons_readchar(void);
 R_API bool r_cons_readpush(const char *str, int len);
@@ -798,10 +809,12 @@ R_API void r_cons_rgb_init(void);
 R_API char *r_cons_rgb_str(char *outstr, size_t sz, RColor *rcolor);
 R_API char *r_cons_rgb_str_off(char *outstr, size_t sz, ut64 off);
 R_API void r_cons_color(int fg, int r, int g, int b);
+
 R_API RColor r_cons_color_random(ut8 alpha);
 R_API void r_cons_invert(int set, int color);
 R_API int r_cons_yesno(int def, const char *fmt, ...);
 R_API char *r_cons_input(const char *msg);
+R_API char *r_cons_password(const char *msg);
 R_API void r_cons_set_cup(int enable);
 R_API void r_cons_column(int c);
 R_API int r_cons_get_column(void);
@@ -1032,7 +1045,6 @@ typedef struct r_panels_menu_t {
 } RPanelsMenu;
 
 typedef enum {
-	PANEL_MODE_NONE,
 	PANEL_MODE_DEFAULT,
 	PANEL_MODE_ZOOM,
 	PANEL_MODE_WINDOW,
@@ -1054,7 +1066,7 @@ typedef struct r_panels_t {
 	bool isResizing;
 	RPanelsMenu *panelsMenu;
 	Sdb *db;
-	SdbHt *mht;
+	HtPP *mht;
 	RPanelsMode mode;
 	RPanelsMode prevMode;
 	RPanelsLayout layout;

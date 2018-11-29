@@ -24,7 +24,7 @@ Keys:
 
 #include <r_anal.h>
 #include <r_core.h>
-#include <r_print.h>
+#include <r_util.h>
 
 #define META_RANGE_BASE(x) ((x)>>12)
 #undef DB
@@ -542,7 +542,9 @@ R_API void r_meta_print(RAnal *a, RAnalMetaItem *d, int rad, bool show_full) {
 			} else {
 				a->cb_printf ("\"%s\"", str);
 			}
-			if (d->type == 's') {
+			if (d->type == 'd') {
+				a->cb_printf (", \"size\":%d",(int)d->size);
+			} else if (d->type == 's') {
 				const char *enc;
 				switch (d->subtype) {
 				case R_STRING_ENC_UTF8:
@@ -698,12 +700,8 @@ static int meta_print_item(void *user, const char *k, const char *v) {
 	if (!meta_deserialize (&it, k, v)) {
 		return 1;
 	}
-	int uirad = ui->rad;
-	if (ui->rad == 'f') {
-		if (!r_anal_fcn_in (ui->fcn, it.from)) {
-			goto beach;
-		}
-		ui->rad = 0;
+	if (ui->fcn && !r_anal_fcn_in (ui->fcn, it.from)) {
+		goto beach;
 	}
 	if (!it.str) {
 		it.str = strdup (""); // don't break in free
@@ -714,19 +712,26 @@ static int meta_print_item(void *user, const char *k, const char *v) {
 	r_meta_print (ui->anal, &it, ui->rad, true);
 beach:
 	free (it.str);
-	ui->rad = uirad;
 	return 1;
 }
 
 R_API int r_meta_list_cb(RAnal *a, int type, int rad, SdbForeachCallback cb, void *user, ut64 addr) {
-	RAnalFunction *fcn = (addr != UT64_MAX) ? r_anal_get_fcn_at (a, addr, 0) : NULL;
-	RAnalMetaUserItem ui = { a, type, rad, cb, user, 0, fcn};
-	SdbList *ls = sdb_foreach_list (DB, true);
-	SdbListIter *lsi;
-	SdbKv *kv;
 	if (rad == 'j') {
 		a->cb_printf ("[");
 	}
+
+	RAnalMetaUserItem ui = { a, type, rad, cb, user, 0, NULL };
+
+	if (addr != UT64_MAX) {
+		ui.fcn = r_anal_get_fcn_in (a, addr, 0);
+		if (!ui.fcn) {
+			goto beach;
+		}
+	}
+
+	SdbList *ls = sdb_foreach_list (DB, true);
+	SdbListIter *lsi;
+	SdbKv *kv;
 	isFirst = true; // TODO: kill global
 	ls_foreach (ls, lsi, kv) {
 		if (type == R_META_TYPE_ANY || (strlen (sdbkv_key (kv)) > 5 && sdbkv_key (kv)[5] == type)) {
@@ -738,6 +743,8 @@ R_API int r_meta_list_cb(RAnal *a, int type, int rad, SdbForeachCallback cb, voi
 		}
 	}
 	ls_free (ls);
+
+beach:
 	if (rad == 'j') {
 		a->cb_printf ("]\n");
 	}

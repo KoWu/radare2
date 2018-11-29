@@ -214,6 +214,13 @@ static int cb_analdepth(void *user, void *data) {
 	return true;
 }
 
+static int cb_analgraphdepth(void *user, void *data) {
+	RCore *core = (RCore *)user;
+	RConfigNode *node = (RConfigNode *)data;
+	core->anal->opt.graph_depth = node->i_value;
+	return true;
+}
+
 static int cb_analafterjmp(void *user, void *data) {
 	RCore *core = (RCore*) user;
 	RConfigNode *node = (RConfigNode*) data;
@@ -693,8 +700,7 @@ static int cb_asmfeatures(void *user, void *data) {
 		print_node_options (node);
 		return 0;
 	}
-	free (core->assembler->features);
-	core->assembler->features = NULL;
+	R_FREE (core->assembler->features);
 	if (node->value[0]) {
 		core->assembler->features = strdup (node->value);
 	}
@@ -1309,6 +1315,13 @@ static int cb_rows(void *user, void *data) {
 	return true;
 }
 
+static int cb_cmd_hexcursor(void *user, void *data) {
+	RCore *core = (RCore *) user;
+	RConfigNode *node = (RConfigNode *) data;
+	core->print->cfmt = node->value;
+	return true;
+}
+
 static int cb_hexcompact(void *user, void *data) {
 	RCore *core = (RCore *) user;
 	RConfigNode *node = (RConfigNode *) data;
@@ -1500,9 +1513,6 @@ static int cb_cmddepth(void *user, void *data) {
 static int cb_hexcols(void *user, void *data) {
 	RCore *core = (RCore *)user;
 	int c = R_MIN (1024, R_MAX (((RConfigNode*)data)->i_value, 0));
-	if (c < 0) {
-		c = 0;
-	}
 	core->print->cols = c & ~1;
 	core->dbg->regcols = c/4;
 	return true;
@@ -2169,6 +2179,13 @@ static int cb_anal_followdatarefs(void *user, void *data) {
 	return true;
 }
 
+static int cb_anal_jmpmid(void *user, void *data) {
+	RCore *core = (RCore*) user;
+	RConfigNode *node = (RConfigNode*) data;
+	core->anal->opt.jmpmid = node->i_value;
+	return true;
+}
+
 static int cb_anal_searchstringrefs(void *user, void *data) {
 	RCore *core = (RCore*) user;
 	RConfigNode *node = (RConfigNode*) data;
@@ -2344,6 +2361,21 @@ static int cb_log_config_colors(void *coreptr, void *nodeptr) {
 	return true;
 }
 
+static int cb_dbg_verbose(void *user, void *data) {
+	RCore *core = (RCore *)user;
+	RConfigNode *node = (RConfigNode *)data;
+	const char *value = node->value;
+	switch (value[0]) {
+	case 't':
+	case 'T':
+		core->dbg->verbose = true;
+		break;
+	default:
+		core->dbg->verbose = false;
+	}
+	return true;
+}
+
 #define SLURP_LIMIT (10*1024*1024)
 R_API int r_core_config_init(RCore *core) {
 	int i;
@@ -2407,6 +2439,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB ("anal.afterjmp", "true", &cb_analafterjmp, "Continue analysis after jmp/ujmp");
 	SETCB ("anal.endsize", "true", &cb_anal_endsize, "Adjust function size at the end of the analysis (known to be buggy)");
 	SETICB ("anal.depth", 64, &cb_analdepth, "Max depth at code analysis"); // XXX: warn if depth is > 50 .. can be problematic
+	SETICB ("anal.graph_depth", 256, &cb_analgraphdepth, "Max depth for path search");
 	SETICB ("anal.sleep", 0, &cb_analsleep, "Sleep N usecs every so often during analysis. Avoid 100% CPU usage");
 	SETPREF ("anal.calls", "false", "Make basic af analysis walk into calls");
 	SETPREF ("anal.autoname", "true", "Automatically set a name for the functions, may result in some false positives");
@@ -2440,6 +2473,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB ("anal.jmpabove", "true", &cb_anal_jmpabove, "Jump above function pointer");
 	SETCB ("anal.datarefs", "false", &cb_anal_followdatarefs, "Follow data references for code coverage");
 	SETCB ("anal.brokenrefs", "false", &cb_anal_brokenrefs, "Follow function references as well if function analysis was failed");
+	SETCB ("anal.jmpmid", "true", &cb_anal_jmpmid, "Continue analysis after jump to middle of instruction (x86 only)");
 
 	SETCB ("anal.refstr", "false", &cb_anal_searchstringrefs, "Search string references in data references");
 	SETCB ("anal.bb.maxsize", "1024", &cb_anal_bb_max_size, "Maximum basic block size");
@@ -2534,8 +2568,9 @@ R_API int r_core_config_init(RCore *core) {
 	n = NODEICB ("asm.flags.middle", 2, &cb_midflags);
 	SETOPTIONS (n, "0 = do not show flag", "1 = show without realign", "2 = realign at middle flag",
 		"3 = realign at middle flag if sym.*", NULL);
-	SETCB ("asm.flags.real", "false", &cb_flag_realnames, "Show flags unfiltered realnames instead of names");
 	SETDESC (n, "Realign disassembly if there is a flag in the middle of an instruction");
+	SETCB ("asm.flags.real", "false", &cb_flag_realnames, "Show flags unfiltered realnames instead of names");
+	SETPREF ("asm.bb.middle", "true", "Realign disassembly if a basic block starts in the middle of an instruction");
 	SETPREF ("asm.lbytes", "true", "Align disasm bytes to left");
 	SETPREF ("asm.lines", "true", "Show ASCII-art lines at disassembly");
 	SETPREF ("asm.lines.bb", "true", "Show flow lines at jumps");
@@ -2545,6 +2580,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF ("asm.lines.right", "false", "Show lines before opcode instead of offset");
 	SETPREF ("asm.lines.wide", "false", "Put a space between lines");
 	SETICB ("asm.lines.width", 7, &cb_asmlineswidth, "Number of columns for program flow arrows");
+	SETI ("asm.maxflags", 0, "Maximum number of flags to show in a single offset");
 	SETICB ("asm.var.submin", 0x100, &cb_asmvarsubmin, "Minimum value to substitute in instructions (asm.var.sub)");
 	SETCB ("asm.tailsub", "false", &cb_asmtailsub, "Replace addresses with prefix .. syntax");
 	SETPREF ("asm.middle", "false", "Allow disassembling jumps in the middle of an instruction");
@@ -2690,8 +2726,8 @@ R_API int r_core_config_init(RCore *core) {
 	/* cfg.log */
 	// R2_LOGLEVEL / cfg.log.level
 	p = r_sys_getenv ("R2_LOGLEVEL");
-	SETICB ("cfg.log.level", p ? atoi(p) : R_LOGLVL_ERROR, cb_log_config_level, "Target log level/severity"\
-	 " (0:SILLY, 1:VERBOSE, 2:DEBUG, 3:INFO, 4:WARN, 5:ERROR, 6:FATAL)"
+	SETICB ("cfg.log.level", p ? atoi(p) : R_DEFAULT_LOGLVL, cb_log_config_level, "Target log level/severity"\
+	 " (0:SILLY, 1:DEBUG, 2:VERBOSE, 3:INFO, 4:WARN, 5:ERROR, 6:FATAL)"
 	);
 	free (p);
 	// R2_LOGTRAP_LEVEL / cfg.log.traplevel
@@ -2751,6 +2787,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF ("dir.projects", R_JOIN_2_PATHS ("~", R2_HOME_PROJECTS), "Default path for projects");
 #endif
 	SETCB ("dir.zigns", R_JOIN_2_PATHS ("~", R2_HOME_ZIGNS), &cb_dirzigns, "Default path for zignatures (see zo command)");
+	SETPREF ("stack.reg", "SP", "Which register to use as stack pointer in the visual debug");
 	SETPREF ("stack.bytes", "true", "Show bytes instead of words in stack");
 	SETPREF ("stack.anotated", "false", "Show anotated hexdump in visual debug");
 	SETI ("stack.size", 64,  "Size in bytes of stack hexdump in visual debug");
@@ -2759,6 +2796,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB ("dbg.libs", "", &cb_dbg_libs, "If set stop when loading matching libname");
 	SETI ("dbg.hwbp", 0, "Set HW or SW breakpoints");
 	SETCB ("dbg.unlibs", "", &cb_dbg_unlibs, "If set stop when unloading matching libname");
+	SETCB ("dbg.verbose", "true", &cb_dbg_verbose, "Verbose debug output");
 	SETPREF ("dbg.slow", "false", "Show stack and regs in visual mode in a slow but verbose mode");
 	SETPREF ("dbg.funcarg", "false", "Display arguments to function call in visual mode");
 
@@ -2851,6 +2889,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF ("hex.header", "true", "Show header in hexdumps");
 	SETCB ("hex.pairs", "true", &cb_hexpairs, "Show bytes paired in 'px' hexdump");
 	SETCB ("hex.compact", "false", &cb_hexcompact, "Show smallest 16 byte col hexdump (60 columns)");
+	SETCB ("cmd.hexcursor", "", &cb_cmd_hexcursor, "If set and cursor is enabled display given pf format string");
 	SETI ("hex.flagsz", 0, "If non zero, overrides the flag size in pxa");
 	SETICB ("hex.cols", 16, &cb_hexcols, "Number of columns in hexdump");
 	SETI ("hex.pcols", 40, "Number of pixel columns for prc");
@@ -2920,6 +2959,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETI ("graph.linemode", 1, "Graph edges (0=diagonal, 1=square)");
 	SETPREF ("graph.font", "Courier", "Font for dot graphs");
 	SETPREF ("graph.offset", "false", "Show offsets in graphs");
+	SETPREF ("graph.bytes", "false", "Show opcode bytes in graphs");
 	SETPREF ("graph.web", "false", "Display graph in web browser (VV)");
 	SETI ("graph.from", UT64_MAX, "Lower bound address when drawing global graphs");
 	SETI ("graph.to", UT64_MAX, "Upper bound address when drawing global graphs");
@@ -2992,6 +3032,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETDESC (n, "Select visual seek mode (affects n/N visual commands)");
 	SETOPTIONS (n, "fun", "hit", "flag", NULL);
 	SETCB ("scr.pager", "", &cb_pager, "System program (or '..') to use when output exceeds screen boundaries");
+	SETPREF ("scr.scrollbar", "false", "Show scrollbar in visual mode");
 	SETPREF ("scr.randpal", "false", "Random color palete or just get the next one from 'eco'");
 	SETCB ("scr.color.grep", "false", &cb_scr_color_grep, "Enable colors when using ~grep");
 	SETPREF ("scr.pipecolor", "false", "Enable colors when using pipes");

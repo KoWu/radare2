@@ -611,10 +611,29 @@ static int opxor(RAsm *a, ut8 * data, const Opcode *op) {
 static int opnot(RAsm *a, ut8 * data, const Opcode *op) {
 	int l = 0;
 
-	if(op->operands[0].reg == X86R_UNDEFINED)  {
+	if (op->operands[0].reg == X86R_UNDEFINED)  {
 		return -1;
 	}
 
+	int size = op->operands[0].type & ALL_SIZE;
+	if (op->operands[0].explicit_size) {
+		size = op->operands[0].dest_size;
+	}
+	//rex prefix
+	int rex = 1 << 6;
+	bool use_rex = false;
+	if (size & OT_QWORD) {			//W field
+		use_rex = true;
+		rex |= 1 << 3;
+	}
+	if (op->operands[0].extended) {		//B field
+		use_rex = true;
+		rex |= 1;
+	}
+
+	if (use_rex) {
+		data[l++] = rex;
+	}
 	data[l++] = 0xf7;
 	data[l++] = 0xd0 | op->operands[0].reg;
 
@@ -930,7 +949,7 @@ static int opdec(RAsm *a, ut8 *data, const Opcode *op) {
 	int reg = 0;
 	int rm;
 	bool use_sib = false;
-	int sib;
+	int sib = 0;
 	//mod
 	if (offset == 0) {
 		mod = 0;
@@ -1341,7 +1360,7 @@ static int opinc(RAsm *a, ut8 *data, const Opcode *op) {
 	int reg = 0;
 	int rm;
 	bool use_sib = false;
-	int sib;
+	int sib = 0;
 	//mod
 	if (offset == 0) {
 		mod = 0;
@@ -2004,9 +2023,9 @@ static int opmov(RAsm *a, ut8 *data, const Opcode *op) {
 			if (op->operands[1].scale[0] == 0) {
 				return -1;
 			}
-			data[l++] = SEG_REG_PREFIXES[op->operands[1].regs[0]];
+			data[l++] = SEG_REG_PREFIXES[op->operands[1].regs[0] % 6];
 			data[l++] = 0x8b;
-			data[l++] = op->operands[0].reg << 3 | 0x5;
+			data[l++] = (((ut32)op->operands[0].reg) << 3) | 0x5;
 			data[l++] = offset;
 			data[l++] = offset >> 8;
 			data[l++] = offset >> 16;
@@ -4295,23 +4314,28 @@ LookupTable oplookup[] = {
 };
 
 static x86newTokenType getToken(const char *str, size_t *begin, size_t *end) {
+	if (*begin > strlen (str)) {
+		return TT_EOF;
+	}
 	// Skip whitespace
-	while (begin && isspace ((int)str[*begin])) {
+	while (begin && str[*begin] && isspace ((ut8)str[*begin])) {
 		++(*begin);
 	}
 
 	if (!str[*begin]) {                // null byte
 		*end = *begin;
 		return TT_EOF;
-	} else if (isalpha ((int)str[*begin])) {   // word token
+	}
+	if (isalpha ((ut8)str[*begin])) {   // word token
 		*end = *begin;
-		while (end && isalnum ((int)str[*end])) {
+		while (end && str[*end] && isalnum ((ut8)str[*end])) {
 			++(*end);
 		}
 		return TT_WORD;
-	} else if (isdigit ((int)str[*begin])) {   // number token
+	}
+	if (isdigit ((ut8)str[*begin])) {   // number token
 		*end = *begin;
-		while (end && isalnum ((int)str[*end])) {     // accept alphanumeric characters, because hex.
+		while (end && isalnum ((ut8)str[*end])) {     // accept alphanumeric characters, because hex.
 			++(*end);
 		}
 		return TT_NUMBER;
@@ -4768,6 +4792,7 @@ static int oprep(RAsm *a, ut8 *data, const Opcode *op) {
 		if (!r_str_casecmp (instr.mnemonic, lt_ptr->mnemonic)) {
 			if (lt_ptr->opcode > 0) {
 				if (lt_ptr->only_x32 && a->bits == 64) {
+					free (instr.mnemonic);
 					return -1;
 				}
 				ut8 *ptr = (ut8 *)&lt_ptr->opcode;

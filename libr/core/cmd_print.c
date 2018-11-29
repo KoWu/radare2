@@ -3,9 +3,8 @@
 #include "r_asm.h"
 #include "r_core.h"
 #include "r_config.h"
-#include "r_print.h"
-#include "r_types.h"
 #include "r_util.h"
+#include "r_types.h"
 #include <limits.h>
 
 #define R_CORE_MAX_DISASM (1024 * 1024 * 8)
@@ -348,6 +347,8 @@ static const char *help_detail_pf[] = {
 	" ", "+", "toggle show flags for each offset",
 	" ", ":", "skip 4 bytes",
 	" ", ".", "skip 1 byte",
+	" ", ";", "rewind 4 bytes",
+	" ", ",", "rewind 1 byte",
 	NULL
 };
 
@@ -902,9 +903,6 @@ static void print_format_help_help_help_help(RCore *core) {
 
 static void cmd_print_fromage(RCore *core, const char *input, const ut8* data, int size) {
 	switch (*input) {
-	case '?': // "pF?"
-		r_core_cmd_help (core, help_msg_pF);
-		break;
 	case 'a':
 		{
 			asn1_setformat (input[1] != 'q');
@@ -954,7 +952,8 @@ static void cmd_print_fromage(RCore *core, const char *input, const ut8* data, i
 		}
 		break;
 	default:
-		eprintf ("Not yet implemented\n");
+	case '?': // "pF?"
+		r_core_cmd_help (core, help_msg_pF);
 		break;
 	}
 }
@@ -1347,8 +1346,7 @@ static void annotated_hexdump(RCore *core, const char *str, int len) {
 
 		for (j = 0; j < nb_cols; j++) {
 			setcolor = true;
-			free (note[j]);
-			note[j] = NULL;
+			R_FREE (note[j]);
 
 			// collect comments
 			comment = r_meta_get_string (core->anal, R_META_TYPE_COMMENT, addr + j);
@@ -2393,10 +2391,38 @@ static void cmd_print_pv(RCore *core, const char *input, const ut8* block) {
 		// r_num_get is gonna use a dangling pointer since the internal
 		// token that RNum holds ([$$]) has been already freed by r_core_cmd_str
 		// r_num_math reload a new token so the dangling pointer is gone
-		r_cons_printf ("{\"value\":%"PFMT64u ",\"string\":\"%s\"}\n",
-			r_num_math (core->num, "[$$]"),
+		switch(input[1]) {
+		case '1':
+			r_cons_printf ("{\"value\":%"PFMT64u ",\"string\":\"%s\"}\n",
+			r_read_ble8 (block),
 			str
 			);
+			break;
+		case '2':
+			r_cons_printf ("{\"value\":%"PFMT64u ",\"string\":\"%s\"}\n",
+			r_read_ble16 (block, core->print->big_endian),
+			str
+			);
+			break;
+		case '4':
+			r_cons_printf ("{\"value\":%"PFMT64u ",\"string\":\"%s\"}\n",
+			r_read_ble32 (block, core->print->big_endian),
+			str
+			);
+			break;
+		case '8':
+			r_cons_printf ("{\"value\":%"PFMT64u ",\"string\":\"%s\"}\n",
+			r_read_ble64 (block, core->print->big_endian),
+			str
+			);
+			break;
+		default:
+			r_cons_printf ("{\"value\":%"PFMT64u ",\"string\":\"%s\"}\n",
+			r_read_ble64 (block, core->print->big_endian),
+			str
+			);
+			break;
+		}
 		free (str);
 		break;
 	}
@@ -2467,6 +2493,9 @@ static int cmd_print_blocks(RCore *core, const char *input) {
 	ut64 to = 0;
 	{
 		RList *list = r_core_get_boundaries_prot (core, -1, NULL, "search");
+		if (!list) {
+			return 1;
+		}
 		RIOMap *map = r_list_first (list);
 		if (map) {
 			from = map->itv.addr;
@@ -2710,6 +2739,10 @@ static void cmd_print_bars(RCore *core, const char *input) {
 	RListIter *iter;
 	ut64 from = 0, to = 0;
 	RList *list = r_core_get_boundaries_prot (core, -1, NULL, "zoom");
+	if (!list) {
+		goto beach;
+	}
+
 	ut64 blocksize = 0;
 	int mode = 'b'; // e, p, b, ...
 	int submode = 0; // q, j, ...
@@ -2756,9 +2789,8 @@ static void cmd_print_bars(RCore *core, const char *input) {
 		eprintf ("Invalid block size: %d\n", (int)blocksize);
 		goto beach;
 	}
-	if (list) {
-		RListIter *iter1 = list->head;
-		RIOMap* map1 = iter1->data;
+	RIOMap* map1 = r_list_first (list);
+	if (map1) {
 		from = map1->itv.addr;
 		r_list_foreach (list, iter, map) {
 			to = r_itv_end (map->itv);
@@ -3173,6 +3205,7 @@ static ut32 tmp_get_contsize(RAnalFunction *f) {
 
 static void pr_bb(RCore *core, RAnalFunction *fcn, RAnalBlock *b, bool emu, ut64 saved_gp, ut8 *saved_arena, char p_type, bool fromHere) {
 	bool show_flags = r_config_get_i (core->config, "asm.flags");
+	const char *orig_bb_middle = r_config_get (core->config, "asm.bb.middle");
 	core->anal->gp = saved_gp;
 	if (fromHere) {
 		if (b->addr < core->offset) {
@@ -3197,9 +3230,11 @@ static void pr_bb(RCore *core, RAnalFunction *fcn, RAnalBlock *b, bool emu, ut64
 	if (b->parent_stackptr != INT_MAX) {
 		core->anal->stackptr = b->parent_stackptr;
 	}
+	r_config_set_i (core->config, "asm.bb.middle", false);
 	p_type == 'D'
 	? r_core_cmdf (core, "pD %d @0x%"PFMT64x, b->size, b->addr)
 	: r_core_cmdf (core, "pI %d @0x%"PFMT64x, b->size, b->addr);
+	r_config_set (core->config, "asm.bb.middle", orig_bb_middle);
 
 	if (b->jump != UT64_MAX) {
 		if (b->jump > b->addr) {
@@ -3536,13 +3571,15 @@ static void func_walk_blocks(RCore *core, RAnalFunction *f, char input, char typ
 	RAnalBlock *b = NULL;
 	RAnalFunction *tmp_func;
 	RListIter *locs_it = NULL;
+	const char *orig_bb_middle = r_config_get (core->config, "asm.bb.middle");
+	r_config_set_i (core->config, "asm.bb.middle", false);
 
 	if (f->fcn_locs) {
 		locs_it = f->fcn_locs->head;
 	}
 	// XXX: hack must be reviewed/fixed in code analysis
-	if (b) {
-		if (r_list_length (f->bbs) == 1) {
+	if (!b) {
+		if (r_list_length (f->bbs) >= 1) {
 			ut32 fcn_size = r_anal_fcn_realsize (f);
 			b = r_list_get_top (f->bbs);
 			if (b->size > fcn_size) {
@@ -3686,9 +3723,10 @@ static void func_walk_blocks(RCore *core, RAnalFunction *f, char input, char typ
 		core->anal->stackptr = saved_stackptr;
 		r_config_set_i (core->config, "asm.lines.bb", asm_lines);
 	}
+	r_config_set (core->config, "asm.bb.middle", orig_bb_middle);
 }
 
-static inline const char cmd_pxb_p(char input) {
+static inline char cmd_pxb_p(char input) {
 	return IS_PRINTABLE (input)? input: '.';
 }
 
@@ -4073,7 +4111,7 @@ static int cmd_print(void *data, const char *input) {
 					int printed = 0;
 					int bufsz;
 					RAnalOp aop = { 0 };
-					char *hex_arg = calloc (1, strlen (arg));
+					char *hex_arg = calloc (1, strlen (arg) + 1);
 					if (hex_arg) {
 						bufsz = r_hex_str2bin (arg + 1, (ut8 *)hex_arg);
 						while (printed < bufsz) {
@@ -4288,7 +4326,7 @@ static int cmd_print(void *data, const char *input) {
 			RAnalFunction *f = r_anal_get_fcn_in (core->anal, core->offset,
 				R_ANAL_FCN_TYPE_FCN | R_ANAL_FCN_TYPE_SYM);
 			if (f) {
-				func_walk_blocks (core, f, input[1], 'I', input[2] == '.');
+				func_walk_blocks (core, f, input[2], 'I', input[2] == '.');
 			} else {
 				eprintf ("Cannot find function at 0x%08"PFMT64x "\n", core->offset);
 				core->num->value = 0;
@@ -4480,6 +4518,8 @@ static int cmd_print(void *data, const char *input) {
 					ut8 *loc_buf = NULL;
 					RAnalBlock *b;
 					ut32 fcn_size = r_anal_fcn_realsize (f);
+					const char *orig_bb_middle = r_config_get (core->config, "asm.bb.middle");
+					r_config_set_i (core->config, "asm.bb.middle", false);
 					cont_size = tmp_get_contsize (f);
 					r_cons_printf ("{");
 					r_cons_printf ("\"name\":\"%s\"", f->name);
@@ -4538,6 +4578,7 @@ static int cmd_print(void *data, const char *input) {
 					}
 					r_cons_printf ("]}\n");
 					pd_result = 0;
+					r_config_set (core->config, "asm.bb.middle", orig_bb_middle);
 				} else if (f) {
 #if 0
 					for (; locs_it && (tmp_func = locs_it->data); locs_it = locs_it->n) {
@@ -4921,7 +4962,7 @@ static int cmd_print(void *data, const char *input) {
 			if (l > 0) {
 				ut64 bitness = r_config_get_i (core->config, "asm.bits");
 				if (bitness != 32 && bitness != 64) {
-					eprintf ("Error: bitness of %" PFMT64u " not supported", bitness);
+					eprintf ("Error: bitness of %" PFMT64u " not supported\n", bitness);
 					break;
 				}
 				if (*core->block & 0x1) { // "long" string
@@ -5205,7 +5246,7 @@ static int cmd_print(void *data, const char *input) {
 					if (c == 3) {
 						const ut8 *b = core->block + i - 3;
 						int (*k) (const ut8 *, int) = cmd_pxb_k;
-						const char (*p) (char) = cmd_pxb_p;
+						char (*p) (char) = cmd_pxb_p;
 
 						n = k (b, 0) | k (b, 1) | k (b, 2) | k (b, 3);
 						r_cons_printf ("0x%08x  %c%c%c%c\n",
@@ -5835,7 +5876,7 @@ static int cmd_print(void *data, const char *input) {
 			RIOMap* map;
 			RListIter *iter;
 			RList *list = r_core_get_boundaries_prot (core, -1, NULL, "zoom");
-			if (list) {
+			if (list && r_list_length (list) > 0) {
 				RListIter *iter1 = list->head;
 				RIOMap* map1 = iter1->data;
 				from = map1->itv.addr;

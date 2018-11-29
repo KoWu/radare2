@@ -91,7 +91,7 @@ R_API int r_debug_reg_list(RDebug *dbg, int type, int size, int rad, const char 
 	RRegItem *item;
 	RList *head;
 	ut64 diff;
-	char strvalue[128];
+	char strvalue[256];
 	if (!dbg || !dbg->reg) {
 		return false;
 	}
@@ -175,7 +175,7 @@ R_API int r_debug_reg_list(RDebug *dbg, int type, int size, int rad, const char 
 				diff = r_reg_get_value (dbg->reg, item);
 				r_reg_arena_swap (dbg->reg, false);
 				delta = value-diff;
-				if (tolower (rad) == 'j') {
+				if (tolower ((ut8)rad) == 'j') {
 					snprintf (strvalue, sizeof (strvalue),"%"PFMT64u, value);
 				} else {
 					snprintf (strvalue, sizeof (strvalue),"0x%08"PFMT64x, value);

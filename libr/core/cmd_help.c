@@ -100,7 +100,6 @@ static const char *help_msg_root[] = {
 	"q","[?] [ret]", "quit program with a return value",
 	"r","[?] [len]", "resize file",
 	"s","[?] [addr]", "seek to address (also for '0x', '0x1' == 's 0x1')",
-	"S","[?]", "io section manipulation information",
 	"t","[?]", "types, noreturn, signatures, C parser and more",
 	"T","[?] [-] [num|msg]", "Text log utility",
 	"u","[?]", "uname/undo seek/write",
@@ -427,6 +426,9 @@ static int cmd_help(void *data, const char *input) {
 	case 'B': // "?B"
 		k = r_str_trim_ro (input + 1);
 		tmp = r_core_get_boundaries_prot (core, -1, k, "search");
+		if (!tmp) {
+			return false;
+		}
 		r_list_foreach (tmp, iter, map) {
 			r_cons_printf ("0x%"PFMT64x" 0x%"PFMT64x"\n", map->itv.addr, r_itv_end (map->itv));
 		}
@@ -477,15 +479,15 @@ static int cmd_help(void *data, const char *input) {
 		break;
 	case 'u': // "?u"
 		{
-			char unit[32];
+			char unit[8];
 			n = r_num_math (core->num, input+1);
-			r_num_units (unit, n);
+			r_num_units (unit, sizeof (unit), n);
 			r_cons_println (unit);
 		}
 		break;
 	case ' ': // "? "
 		{
-			char *asnum, unit[32];
+			char *asnum, unit[8];
 			ut32 s, a;
 			double d;
 			float f;
@@ -505,7 +507,7 @@ static int cmd_help(void *data, const char *input) {
 				/* decimal, hexa, octal */
 				s = n >> 16 << 12;
 				a = n & 0x0fff;
-				r_num_units (unit, n);
+				r_num_units (unit, sizeof (unit), n);
 				r_cons_printf ("hex     0x%"PFMT64x"\n", n);
 				r_cons_printf ("octal   0%"PFMT64o"\n", n);
 				r_cons_printf ("unit    %s\n", unit);

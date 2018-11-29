@@ -78,7 +78,6 @@ static void cmd_debug_reg(RCore *core, const char *str);
 #include "cmd_debug.c"
 #include "cmd_log.c"
 #include "cmd_zign.c"
-#include "cmd_section.c"
 #include "cmd_flag.c"
 #include "cmd_project.c"
 #include "cmd_write.c"
@@ -350,7 +349,7 @@ R_API RAsmOp *r_core_disassemble (RCore *core, ut64 addr) {
 }
 
 static int cmd_uname(void *data, const char *input) {
-	RCore *core = data;
+	RCore *core = (RCore *)data;
 	switch (input[0]) {
 	case '?': // "u?"
 		r_core_cmd_help (data, help_msg_u);
@@ -1246,9 +1245,9 @@ static int cmd_resize(void *data, const char *input) {
 	case 'h':
 		if (core->file) {
 			if (oldsize != -1) {
-				char *s = r_num_units (NULL, oldsize);
-				r_cons_printf ("%s\n", s);
-				free (s);
+				char humansz[8];
+				r_num_units (humansz, sizeof (humansz), oldsize);
+				r_cons_printf ("%s\n", humansz);
 			}
 		}
 		return true;
@@ -1668,7 +1667,7 @@ static void r_w32_cmd_pipe(RCore *core, char *radare_cmd, char *shell_cmd) {
 	SECURITY_ATTRIBUTES sa;
 	HANDLE pipe[2] = {NULL, NULL};
 	int fd_out = -1, cons_out = -1;
-	char *_shell_cmd;
+	char *_shell_cmd = NULL;
 	LPTSTR _shell_cmd_ = NULL;
 
 	sa.nLength = sizeof (SECURITY_ATTRIBUTES);
@@ -1688,7 +1687,7 @@ static void r_w32_cmd_pipe(RCore *core, char *radare_cmd, char *shell_cmd) {
 	si.dwFlags |= STARTF_USESTDHANDLES;
 	si.cb = sizeof (si);
 	_shell_cmd = shell_cmd;
-	while (*_shell_cmd && isspace (*_shell_cmd)) {
+	while (*_shell_cmd && isspace ((ut8)*_shell_cmd)) {
 		_shell_cmd++;
 	}
 	_shell_cmd_ = r_sys_conv_utf8_to_utf16 (_shell_cmd);
@@ -2301,8 +2300,7 @@ escape_pipe:
 	}
 
 	/* Out Of Band Input */
-	free (core->oobi);
-	core->oobi = NULL;
+	R_FREE (core->oobi);
 
 	ptr = strstr (cmd, "?*");
 	if (ptr && (ptr == cmd || ptr[-1] != '~')) {
@@ -3090,7 +3088,7 @@ R_API int r_core_cmd_foreach3(RCore *core, const char *cmd, char *each) { // "@@
 			r_list_foreach (obj->sections, it, sec){
 				ut64 addr = sec->vaddr;
 				ut64 size = sec->vsize;
-				// TODO: 
+				// TODO:
 				//if (R_BIN_SCN_EXECUTABLE & sec->perm) {
 				//	continue;
 				//}
@@ -3547,8 +3545,7 @@ R_API int r_core_cmd_foreach(RCore *core, const char *cmd, char *each) {
 				r_list_free (match_flag_items);
 				core->flags->space_idx = flagspace;
 				core->rcmd->macro.counter++ ;
-				free (word);
-				word = NULL;
+				R_FREE (word);
 			}
 		}
 	}
@@ -3636,8 +3633,7 @@ R_API int r_core_cmd(RCore *core, const char *cstr, int log) {
 	if (core->cmd_depth < 1) {
 		eprintf ("r_core_cmd: That was too deep (%s)...\n", cmd);
 		free (ocmd);
-		free (core->oobi);
-		core->oobi = NULL;
+		R_FREE (core->oobi);
 		core->oobi_len = 0;
 		goto beach;
 	}
@@ -3661,8 +3657,7 @@ R_API int r_core_cmd(RCore *core, const char *cstr, int log) {
 	run_pending_anal (core);
 	core->cmd_depth++;
 	free (ocmd);
-	free (core->oobi);
-	core->oobi = NULL;
+	R_FREE (core->oobi);
 	core->oobi_len = 0;
 	return ret;
 beach:
@@ -3783,7 +3778,7 @@ R_API char *r_core_disassemble_bytes(RCore *core, ut64 addr, int b) {
 	return ret;
 }
 
-R_API int r_core_cmd_buffer(void *user, const char *buf) {
+R_API int r_core_cmd_buffer(RCore *core, const char *buf) {
 	char *ptr, *optr, *str = strdup (buf);
 	if (!str) {
 		return false;
@@ -3792,32 +3787,32 @@ R_API int r_core_cmd_buffer(void *user, const char *buf) {
 	ptr = strchr (str, '\n');
 	while (ptr) {
 		*ptr = '\0';
-		r_core_cmd (user, optr, 0);
+		r_core_cmd (core, optr, 0);
 		optr = ptr + 1;
 		ptr = strchr (str, '\n');
 	}
-	r_core_cmd (user, optr, 0);
+	r_core_cmd (core, optr, 0);
 	free (str);
 	return true;
 }
 
-R_API int r_core_cmdf(void *user, const char *fmt, ...) {
+R_API int r_core_cmdf(RCore *core, const char *fmt, ...) {
 	char string[4096];
 	int ret;
 	va_list ap;
 	va_start (ap, fmt);
 	vsnprintf (string, sizeof (string), fmt, ap);
-	ret = r_core_cmd ((RCore *)user, string, 0);
+	ret = r_core_cmd (core, string, 0);
 	va_end (ap);
 	return ret;
 }
 
-R_API int r_core_cmd0(void *user, const char *cmd) {
-	return r_core_cmd ((RCore *)user, cmd, 0);
+R_API int r_core_cmd0(RCore *core, const char *cmd) {
+	return r_core_cmd (core, cmd, 0);
 }
 
-R_API int r_core_flush(void *user, const char *cmd) {
-	int ret = r_core_cmd ((RCore *)user, cmd, 0);
+R_API int r_core_flush(RCore *core, const char *cmd) {
+	int ret = r_core_cmd (core, cmd, 0);
 	r_cons_flush ();
 	return ret;
 }
@@ -4004,6 +3999,10 @@ static void cmd_descriptor_init(RCore *core) {
 	}
 }
 
+static int core_cmd0_wrapper(void *core, const char *cmd) {
+	return r_core_cmd0 ((RCore *)core, cmd);
+}
+
 R_API void r_core_cmd_init(RCore *core) {
 	struct {
 		const char *cmd;
@@ -4046,7 +4045,6 @@ R_API void r_core_cmd_init(RCore *core) {
 		{"Q",        "alias for q!", cmd_Quit},
 		{"resize",   "change file size", cmd_resize},
 		{"seek",     "seek to an offset", cmd_seek, cmd_seek_init},
-		{"Section",  "setup section io information", cmd_section, cmd_section_init},
 		{"t",        "type information (cparse)", cmd_type, cmd_type_init},
 		{"Text",     "Text log utility", cmd_log, cmd_log_init},
 		{"u",        "uname/undo", cmd_uname},
@@ -4062,7 +4060,7 @@ R_API void r_core_cmd_init(RCore *core) {
 	core->rcmd = r_cmd_new ();
 	core->rcmd->macro.user = core;
 	core->rcmd->macro.num = core->num;
-	core->rcmd->macro.cmd = r_core_cmd0;
+	core->rcmd->macro.cmd = core_cmd0_wrapper;
 	core->rcmd->nullcallback = r_core_cmd_nullcallback;
 	core->rcmd->macro.cb_printf = (PrintfCallback)r_cons_printf;
 	r_cmd_set_data (core->rcmd, core);

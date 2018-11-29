@@ -7,7 +7,9 @@
 #include <r_bin.h>
 #include <r_io.h>
 #include <r_cons.h>
+#include "../i/private.h"
 #include "elf/elf.h"
+#include <sdb/ht_uu.h>
 
 static RBinInfo* info(RBinFile *bf);
 
@@ -187,7 +189,7 @@ static RList* sections(RBinFile *bf) {
 			if (!(ptr = R_NEW0 (RBinSection))) {
 				break;
 			}
-			strncpy (ptr->name, (char*)section[i].name, R_BIN_SIZEOF_STRINGS);
+			ptr->name = strdup ((char*)section[i].name);
 			if (strstr (ptr->name, "data") && !strstr (ptr->name, "rel") && !strstr (ptr->name, "pydata")) {
 				ptr->is_data = true;
 			}
@@ -228,39 +230,38 @@ static RList* sections(RBinFile *bf) {
 			ptr->is_segment = true;
 			switch (phdr[i].p_type) {
 			case PT_DYNAMIC:
-				strncpy (ptr->name, "DYNAMIC", R_BIN_SIZEOF_STRINGS);
+				ptr->name = strdup ("DYNAMIC");
 				break;
 			case PT_LOAD:
-				snprintf (ptr->name, R_BIN_SIZEOF_STRINGS, "LOAD%d", n++);
+				ptr->name = r_str_newf ("LOAD%d", n++);
 				found_load = 1;
 				ptr->add = true;
 				break;
 			case PT_INTERP:
-				strncpy (ptr->name, "INTERP", R_BIN_SIZEOF_STRINGS);
+				ptr->name = strdup ("INTERP");
 				break;
 			case PT_GNU_STACK:
-				strncpy (ptr->name, "GNU_STACK", R_BIN_SIZEOF_STRINGS);
+				ptr->name = strdup ("GNU_STACK");
 				break;
 			case PT_GNU_RELRO:
-				strncpy (ptr->name, "GNU_RELRO", R_BIN_SIZEOF_STRINGS);
+				ptr->name = strdup ("GNU_RELRO");
 				break;
 			case PT_GNU_EH_FRAME:
-				strncpy (ptr->name, "GNU_EH_FRAME", R_BIN_SIZEOF_STRINGS);
+				ptr->name = strdup ("GNU_EH_FRAME");
 				break;
 			case PT_PHDR:
-				strncpy (ptr->name, "PHDR", R_BIN_SIZEOF_STRINGS);
+				ptr->name = strdup ("PHDR");
 				break;
 			case PT_TLS:
-				strncpy (ptr->name, "TLS", R_BIN_SIZEOF_STRINGS);
+				ptr->name = strdup ("TLS");
 				break;
 			case PT_NOTE:
-				strncpy (ptr->name, "NOTE", R_BIN_SIZEOF_STRINGS);
+				ptr->name = strdup ("NOTE");
 				break;
 			default:
-				strncpy (ptr->name, "UNKNOWN", R_BIN_SIZEOF_STRINGS);
+				ptr->name = strdup ("UNKNOWN");
 				break;
 			}
-			ptr->name[R_BIN_SIZEOF_STRINGS - 1] = '\0';
 			r_list_append (ret, ptr);
 		}
 	}
@@ -274,7 +275,7 @@ static RList* sections(RBinFile *bf) {
 			if (!(ptr = R_NEW0 (RBinSection))) {
 				return ret;
 			}
-			sprintf (ptr->name, "uphdr");
+			ptr->name = strdup ("uphdr");
 			ptr->size = bf->size;
 			ptr->vsize = bf->size;
 			ptr->paddr = 0;
@@ -291,7 +292,7 @@ static RList* sections(RBinFile *bf) {
 		if (bf->size < ehdr_size) {
 			ehdr_size = bf->size;
 		}
-		sprintf (ptr->name, "ehdr");
+		ptr->name = strdup ("ehdr");
 		ptr->paddr = 0;
 		ptr->vaddr = obj->baddr;
 		ptr->size = ehdr_size;
@@ -500,7 +501,7 @@ static RBinSymbol *convert_symbol(struct Elf_(r_bin_elf_obj_t) *bin,
 				  const char *namefmt) {
 	ut64 paddr, vaddr;
 	RBinSymbol *ptr = NULL;
-	if (symbol->is_value) {
+	if (symbol->is_vaddr) {
 		paddr = UT64_MAX;
 		vaddr = symbol->offset;
 	} else {
@@ -925,25 +926,6 @@ static void _patch_reloc (ut16 e_machine, RIOBind *iob, RBinElfReloc *rel, ut64 
 	}
 }
 
-static bool ht_insert_intu64(SdbHt* ht, int key, ut64 value) {
-	ut64 *mvalue = malloc (sizeof (ut64));
-	if (!mvalue) {
-		return false;
-	}
-	*mvalue = value;
-	return ht_insert (ht, sdb_fmt ("%d", key), (void *)mvalue);
-}
-
-static ut64 ht_find_intu64(SdbHt* ht, int key, bool* found) {
-	ut64 *mvalue = (ut64 *)ht_find (ht, sdb_fmt ("%d", key), found);
-	return *found ? *mvalue : 0;
-}
-
-static void relocs_by_sym_free(HtKv *kv) {
-	free (kv->key);
-	free (kv->value);
-}
-
 static RList* patch_relocs(RBin *b) {
 	RList *ret = NULL;
 	RBinReloc *ptr = NULL;
@@ -951,7 +933,7 @@ static RList* patch_relocs(RBin *b) {
 	RBinObject *obj = NULL;
 	struct Elf_(r_bin_elf_obj_t) *bin = NULL;
 	RIOSection *g = NULL, *s = NULL;
-	SdbHt *relocs_by_sym;
+	HtUU *relocs_by_sym;
 	SdbListIter *iter;
 	RBinElfReloc *relcs = NULL;
 	RBinInfo *info;
@@ -1003,7 +985,8 @@ static RList* patch_relocs(RBin *b) {
 		free (relcs);
 		return NULL;
 	}
-	if (!(relocs_by_sym = ht_new (NULL, relocs_by_sym_free, NULL))) {
+	HtUUOptions opt = { 0 };
+	if (!(relocs_by_sym = ht_uu_new_opt (&opt))) {
 		r_list_free (ret);
 		free (relcs);
 		return NULL;
@@ -1014,8 +997,7 @@ static RList* patch_relocs(RBin *b) {
 
 		if (relcs[i].sym) {
 			if (relcs[i].sym < bin->imports_by_ord_size && bin->imports_by_ord[relcs[i].sym]) {
-				bool found;
-				sym_addr = ht_find_intu64 (relocs_by_sym, relcs[i].sym, &found);
+				sym_addr = ht_uu_find (relocs_by_sym, relcs[i].sym, NULL);
 			} else if (relcs[i].sym < bin->symbols_by_ord_size && bin->symbols_by_ord[relcs[i].sym]) {
 				sym_addr = bin->symbols_by_ord[relcs[i].sym]->vaddr;
 			}
@@ -1030,12 +1012,12 @@ static RList* patch_relocs(RBin *b) {
 			ptr->vaddr = sym_addr;
 		} else {
 			ptr->vaddr = vaddr;
-			ht_insert_intu64 (relocs_by_sym, relcs[i].sym, vaddr);
+			ht_uu_insert (relocs_by_sym, relcs[i].sym, vaddr);
 			vaddr += cdsz;
 		}
 		r_list_append (ret, ptr);
 	}
-	ht_free (relocs_by_sym);
+	ht_uu_free (relocs_by_sym);
 	free (relcs);
 	return ret;
 }
@@ -1174,7 +1156,7 @@ static RBinInfo* info(RBinFile *bf) {
 	} else {
 		ret->dbg_info |= R_BIN_DBG_STRIPPED;
 	}
-	if (Elf_(r_bin_elf_get_static) (obj)) {
+	if (Elf_(r_bin_elf_is_static) (obj)) {
 		ret->dbg_info |= R_BIN_DBG_STATIC;
 	}
 	lookup_sections (bf, ret);

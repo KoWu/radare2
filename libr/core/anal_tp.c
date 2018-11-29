@@ -610,7 +610,7 @@ R_API void r_core_anal_type_match(RCore *core, RAnalFunction *fcn) {
 					bool jmp = false;
 					RAnalOp *jmp_op = {0};
 					ut64 jmp_addr = next_op->jump;
-					RAnalBlock *jmpbb = r_anal_fcn_bbget_in (fcn, jmp_addr);
+					RAnalBlock *jmpbb = r_anal_fcn_bbget_in (anal, fcn, jmp_addr);
 
 					// Check exit status of jmp branch
 					for (i = 0; i < MAX_INSTR ; i++) {
@@ -618,13 +618,14 @@ R_API void r_core_anal_type_match(RCore *core, RAnalFunction *fcn) {
 						if ((jmp_op->type == R_ANAL_OP_TYPE_RET && r_anal_bb_is_in_offset (jmpbb, jmp_addr))
 								|| jmp_op->type == R_ANAL_OP_TYPE_CJMP) {
 							jmp = true;
+							r_anal_op_free (jmp_op);
 							break;
 						}
 						jmp_addr += jmp_op->size;
 						r_anal_op_free (jmp_op);
 					}
 					int cond = jmp? cond_invert (next_op->cond): next_op->cond;
-					var_add_range (anal, var, cond, aop.ptr);
+					var_add_range (anal, var, cond, aop.val);
 				}
 			}
 			prev_var = (var && aop.direction == R_ANAL_OP_DIR_READ)? true: false;
@@ -668,7 +669,6 @@ R_API void r_core_anal_type_match(RCore *core, RAnalFunction *fcn) {
 
 		}
 	}
-	const char *place = r_anal_cc_arg (anal, fcn->cc, 1);
 	// Type propgation for register based args
 	RList *list = r_anal_var_list (anal, fcn, R_ANAL_VAR_KIND_REG);
 	RAnalVar *rvar, *bp_var;
@@ -706,21 +706,26 @@ R_API void r_core_anal_type_match(RCore *core, RAnalFunction *fcn) {
 		free (type);
 		r_anal_var_free (lvar);
 	}
+	r_list_free (list);
 	// Type propgation from caller to callee function for stack based arguments
-	if (place && !strncmp (place, "stack", 5)) {
-		RList *list2 = r_anal_var_list (anal, fcn, R_ANAL_VAR_KIND_BPV);
-		r_list_foreach (list2, iter2, bp_var) {
-			if (bp_var->isarg) {
-				const char *query = sdb_fmt ("fcn.0x%08"PFMT64x".arg.%d", fcn->addr, (bp_var->delta - 8));
-				char *type = (char *) sdb_const_get (anal->sdb_fcns, query, NULL);
-				if (type) {
-					var_retype (anal, bp_var, NULL, type, fcn->addr, false, false);
+	if (fcn->cc) {
+		const char *place = r_anal_cc_arg (anal, fcn->cc, 1);
+		if (place && !strncmp (place, "stack", 5)) {
+			RList *list2 = r_anal_var_list (anal, fcn, R_ANAL_VAR_KIND_BPV);
+			r_list_foreach (list2, iter2, bp_var) {
+				if (bp_var->isarg) {
+					const char *query = sdb_fmt ("fcn.0x%08" PFMT64x ".arg.%d", fcn->addr, (bp_var->delta - 8));
+					char *type = (char *)sdb_const_get (anal->sdb_fcns, query, NULL);
+					if (type) {
+						var_retype (anal, bp_var, NULL, type, fcn->addr, false, false);
+					}
 				}
 			}
+			r_list_free (list2);
 		}
-		r_list_free (list2);
+	} else {
+		R_LOG_DEBUG ("No calling convention set for function '%s'\n", fcn->name);
 	}
-	r_list_free (list);
 out_function:
 	free (buf);
 	r_cons_break_pop();

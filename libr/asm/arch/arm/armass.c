@@ -644,12 +644,10 @@ static int getreg(const char *str) {
 
 static st32 getlistmask(char *input) {
 	st32 tempres, res = 0;
-	int i, j;
-	int start, end;
+	int i, j, start, end;
 	char *temp = NULL;
-	char *temp2 = NULL;
 	char *otemp = NULL;
-	temp2 = malloc (strlen (input) + 1);
+	char *temp2 = malloc (strlen (input) + 1);
 	if (!temp2) {
 		res = -1;
 		goto end;
@@ -2206,7 +2204,7 @@ static int thumb_assemble(ArmOpcode *ao, ut64 off, const char *str) {
 		ut64 argt = thumb_selector (ao->a);
 		switch (argt) {
 		case THUMB_OTHER: {
-			ut16 cond;
+			ut16 cond = 0;
 			ut16 i;
 			
 			const char *conds[] = {
