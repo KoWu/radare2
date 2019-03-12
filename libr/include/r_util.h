@@ -6,6 +6,7 @@
 #include <r_types.h>
 #include <r_diff.h>
 #include <r_regex.h>
+#include <r_getopt.h>
 #include <r_list.h> // radare linked list
 #include <r_skiplist.h> // skiplist
 #include <r_flist.h> // radare fixed pointer array iterators
@@ -28,6 +29,7 @@ int gettimeofday (struct timeval* p, void* tz);
 #include "r_util/r_assert.h"
 #include "r_util/r_itv.h"
 #include "r_util/r_signal.h"
+#include "r_util/r_alloc.h"
 #include "r_util/r_rbtree.h"
 #include "r_util/r_big.h"
 #include "r_util/r_base64.h"
@@ -35,6 +37,7 @@ int gettimeofday (struct timeval* p, void* tz);
 #include "r_util/r_buf.h"
 #include "r_util/r_bitmap.h"
 #include "r_util/r_constr.h"
+#include "r_util/r_date.h"
 #include "r_util/r_debruijn.h"
 #include "r_util/r_cache.h"
 #include "r_util/r_ctypes.h"
@@ -66,7 +69,7 @@ int gettimeofday (struct timeval* p, void* tz);
 #include "r_util/r_utf32.h"
 #include "r_util/r_idpool.h"
 #include "r_util/r_asn1.h"
-#include "r_util/r_json.h"
+#include "r_util/pj.h"
 #include "r_util/r_x509.h"
 #include "r_util/r_pkcs7.h"
 // requires io, core, ... #include "r_util/r_print.h"

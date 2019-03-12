@@ -25,34 +25,40 @@ R_API void r_anal_unset_limits(RAnal *anal) {
 	R_FREE (anal->limit);
 }
 
-static void meta_unset_for(void *user, int idx) {
-	RSpaces *s = (RSpaces*)user;
-	RAnal *anal = (RAnal*)s->user;
-	r_meta_space_unset_for (anal, idx);
+static void meta_unset_for(REvent *ev, int type, void *user, void *data) {
+	RSpaces *s = (RSpaces *)ev->user;
+	RAnal *anal = container_of (s, RAnal, meta_spaces);
+	RSpaceEvent *se = (RSpaceEvent *)data;
+	r_meta_space_unset_for (anal, se->data.unset.space);
 }
 
-static int meta_count_for(void *user, int idx) {
-	RSpaces *s = (RSpaces*)user;
-	RAnal *anal = (RAnal*)s->user;
-	return r_meta_space_count_for (anal, idx);
+static void meta_count_for(REvent *ev, int type, void *user, void *data) {
+	RSpaces *s = (RSpaces *)ev->user;
+	RAnal *anal = container_of (s, RAnal, meta_spaces);
+	RSpaceEvent *se = (RSpaceEvent *)data;
+	se->res = r_meta_space_count_for (anal, se->data.count.space);
 }
 
-static void zign_unset_for(void *user, int idx) {
-	RSpaces *s = (RSpaces*)user;
-	RAnal *anal = (RAnal*)s->user;
-	r_sign_space_unset_for (anal, idx);
+static void zign_unset_for(REvent *ev, int type, void *user, void *data) {
+	RSpaces *s = (RSpaces *)ev->user;
+	RAnal *anal = container_of (s, RAnal, zign_spaces);
+	RSpaceEvent *se = (RSpaceEvent *)data;
+	r_sign_space_unset_for (anal, se->data.unset.space);
 }
 
-static int zign_count_for(void *user, int idx) {
-	RSpaces *s = (RSpaces*)user;
-	RAnal *anal = (RAnal*)s->user;
-	return r_sign_space_count_for (anal, idx);
+static void zign_count_for(REvent *ev, int type, void *user, void *data) {
+	RSpaces *s = (RSpaces *)ev->user;
+	RAnal *anal = container_of (s, RAnal, zign_spaces);
+	RSpaceEvent *se = (RSpaceEvent *)data;
+	se->res = r_sign_space_count_for (anal, se->data.count.space);
 }
 
-static void zign_rename_for(void *user, int idx, const char *oname, const char *nname) {
-	RSpaces *s = (RSpaces*)user;
-	RAnal *anal = (RAnal*)s->user;
-	r_sign_space_rename_for (anal, idx, oname, nname);
+static void zign_rename_for(REvent *ev, int type, void *user, void *data) {
+	RSpaces *s = (RSpaces *)ev->user;
+	RAnal *anal = container_of (s, RAnal, zign_spaces);
+	RSpaceEvent *se = (RSpaceEvent *)data;
+	r_sign_space_rename_for (anal, se->data.rename.space,
+		se->data.rename.oldname, se->data.rename.newname);
 }
 
 //not used
@@ -160,8 +166,14 @@ R_API RAnal *r_anal_new() {
 	anal->cpp_abi = R_ANAL_CPP_ABI_ITANIUM;
 	anal->opt.depth = 32;
 	anal->opt.noncode = false; // do not analyze data by default
-	r_space_new (&anal->meta_spaces, "CS", meta_unset_for, meta_count_for, NULL, anal);
-	r_space_new (&anal->zign_spaces, "zs", zign_unset_for, zign_count_for, zign_rename_for, anal);
+	r_spaces_init (&anal->meta_spaces, "CS");
+	r_event_hook (anal->meta_spaces.event, R_SPACE_EVENT_UNSET, meta_unset_for, NULL);
+	r_event_hook (anal->meta_spaces.event, R_SPACE_EVENT_COUNT, meta_count_for, NULL);
+
+	r_spaces_init (&anal->zign_spaces, "zs");
+	r_event_hook (anal->zign_spaces.event, R_SPACE_EVENT_UNSET, zign_unset_for, NULL);
+	r_event_hook (anal->zign_spaces.event, R_SPACE_EVENT_COUNT, zign_count_for, NULL);
+	r_event_hook (anal->zign_spaces.event, R_SPACE_EVENT_RENAME, zign_rename_for, NULL);
 	anal->sdb_fcns = sdb_ns (anal->sdb, "fcns", 1);
 	anal->sdb_meta = sdb_ns (anal->sdb, "meta", 1);
 	anal->sdb_hints = sdb_ns (anal->sdb, "hints", 1);
@@ -170,6 +182,8 @@ R_API RAnal *r_anal_new() {
 	anal->sdb_fmts = sdb_ns (anal->sdb, "spec", 1);
 	anal->sdb_cc = sdb_ns (anal->sdb, "cc", 1);
 	anal->sdb_zigns = sdb_ns (anal->sdb, "zigns", 1);
+	anal->sdb_classes = sdb_ns (anal->sdb, "classes", 1);
+	anal->sdb_classes_attrs = sdb_ns (anal->sdb_classes, "attrs", 1);
 	anal->zign_path = strdup ("");
 	anal->cb_printf = (PrintfCallback) printf;
 	(void)r_anal_pin_init (anal);
@@ -186,6 +200,7 @@ R_API RAnal *r_anal_new() {
 	anal->lineswidth = 0;
 	anal->fcns = r_anal_fcn_list_new ();
 	anal->fcn_tree = NULL;
+	anal->fcn_addr_tree = NULL;
 	anal->refs = r_anal_ref_list_new ();
 	r_anal_set_bits (anal, 32);
 	anal->plugins = r_list_newf ((RListFree) r_anal_plugin_free);
@@ -215,8 +230,8 @@ R_API RAnal *r_anal_free(RAnal *a) {
 	r_list_free (a->plugins);
 	a->fcns->free = r_anal_fcn_free;
 	r_list_free (a->fcns);
-	r_space_free (&a->meta_spaces);
-	r_space_free (&a->zign_spaces);
+	r_spaces_fini (&a->meta_spaces);
+	r_spaces_fini (&a->zign_spaces);
 	r_anal_pin_fini (a);
 	r_list_free (a->refs);
 	r_syscall_free (a->syscall);
@@ -232,7 +247,6 @@ R_API RAnal *r_anal_free(RAnal *a) {
 		a->esil = NULL;
 	}
 	free (a->last_disasm_reg);
-	memset (a, 0, sizeof (RAnal));
 	free (a);
 	return NULL;
 }
@@ -298,14 +312,11 @@ R_API bool r_anal_set_reg_profile(RAnal *anal) {
 
 R_API bool r_anal_set_fcnsign(RAnal *anal, const char *name) {
 	const char *dirPrefix = r_sys_prefix (NULL);
-	char *file = NULL;
 	const char *arch = (anal->cur && anal->cur->arch) ? anal->cur->arch : R_SYS_ARCH;
-	if (name && *name) {
-		file = sdb_fmt (R_JOIN_3_PATHS ("%s", R2_SDB_FCNSIGN, "%s.sdb"), dirPrefix, name);
-	} else {
-		file = sdb_fmt (R_JOIN_3_PATHS ("%s", R2_SDB_FCNSIGN, "%s-%s-%d.sdb"), dirPrefix,
+	const char *file = (name && *name)
+		? sdb_fmt (R_JOIN_3_PATHS ("%s", R2_SDB_FCNSIGN, "%s.sdb"), dirPrefix, name)
+		: sdb_fmt (R_JOIN_3_PATHS ("%s", R2_SDB_FCNSIGN, "%s-%s-%d.sdb"), dirPrefix,
 			anal->os, arch, anal->bits);
-	}
 	if (r_file_exists (file)) {
 		sdb_close (anal->sdb_fcnsign);
 		sdb_free (anal->sdb_fcnsign);
@@ -336,7 +347,22 @@ R_API int r_anal_set_triplet(RAnal *anal, const char *os, const char *arch, int 
 	return r_anal_use (anal, arch);
 }
 
+// copypasta from core/cbin.c
+static void sdb_concat_by_path(Sdb *s, const char *path) {
+	Sdb *db = sdb_new (0, path, 0);
+	sdb_merge (s, db);
+	sdb_close (db);
+	sdb_free (db);
+}
+
 R_API bool r_anal_set_os(RAnal *anal, const char *os) {
+	Sdb *types = anal->sdb_types;
+	const char *dir_prefix = r_sys_prefix (NULL);
+	const char *dbpath = sdb_fmt (R_JOIN_3_PATHS ("%s", R2_SDB_FCNSIGN, "types-%s.sdb"),
+		dir_prefix, os);
+	if (r_file_exists (dbpath)) {
+		sdb_concat_by_path (types, dbpath);
+	}
 	return r_anal_set_triplet (anal, os, NULL, -1);
 }
 
@@ -483,9 +509,12 @@ R_API int r_anal_purge (RAnal *anal) {
 	sdb_reset (anal->sdb_hints);
 	sdb_reset (anal->sdb_types);
 	sdb_reset (anal->sdb_zigns);
+	sdb_reset (anal->sdb_classes);
+	sdb_reset (anal->sdb_classes_attrs);
 	r_list_free (anal->fcns);
 	anal->fcns = r_anal_fcn_list_new ();
 	anal->fcn_tree = NULL;
+	anal->fcn_addr_tree = NULL;
 	r_list_free (anal->refs);
 	anal->refs = r_anal_ref_list_new ();
 	return 0;
@@ -520,18 +549,21 @@ static int nonreturn_print_commands(void *p, const char *k, const char *v) {
 
 static int nonreturn_print(void *p, const char *k, const char *v) {
 	RAnal *anal = (RAnal *)p;
-	if (!strncmp (v, "func", strlen ("func") + 1)) {
-		const char *query = sdb_fmt ("func.%s.noreturn", k);
-		if (sdb_bool_get (anal->sdb_types, query, NULL)) {
-			anal->cb_printf ("%s\n", k);
+	if (!strncmp (k, "func.", 5) && strstr (k, ".noreturn")) {
+		char *s = strdup (k + 5);
+		char *d = strchr (s, '.');
+		if (d) {
+			*d = 0;
 		}
+		anal->cb_printf ("%s\n", s);
+		free (s);
 	}
 	if (!strncmp (k, "addr.", 5)) {
 		char *off;
 		if (!(off = strdup (k + 5))) {
 			return 1;
 		}
-		char *ptr = strstr (off, ".noret");
+		char *ptr = strstr (off, ".noreturn");
 		if (ptr) {
 			*ptr = 0;
 			anal->cb_printf ("0x%s\n", off);
@@ -561,8 +593,10 @@ R_API bool r_anal_noreturn_add(RAnal *anal, const char *name, ut64 addr) {
 	const char *tmp_name = NULL;
 	Sdb *TDB = anal->sdb_types;
 	char *fnl_name = NULL;
-	if (sdb_bool_set (TDB, K_NORET_ADDR (addr), true, 0)) {
-		return true;
+	if (addr != UT64_MAX) {
+		if (sdb_bool_set (TDB, K_NORET_ADDR (addr), true, 0)) {
+			return true;
+		}
 	}
 	if (name && *name) {
 		tmp_name = name;
@@ -578,56 +612,63 @@ R_API bool r_anal_noreturn_add(RAnal *anal, const char *name, ut64 addr) {
 	if (r_type_func_exist (TDB, tmp_name)) {
 		fnl_name = strdup (tmp_name);
 	} else if (!(fnl_name = r_type_func_guess (TDB, (char *)tmp_name))) {
-		eprintf ("Cant find prototype for %s in types databse\n", tmp_name);
-		return false;
+		if (addr == UT64_MAX) {
+			if (name) {
+				sdb_bool_set (TDB, K_NORET_FUNC (name), true, 0);
+			} else {
+				eprintf ("Cant find prototype for: %s\n", tmp_name);
+			}
+		} else {
+			eprintf ("Cant find prototype for: %s\n", tmp_name);
+		}
+		//return false;
 	}
-	sdb_bool_set (TDB, K_NORET_FUNC(fnl_name), true, 0);
-	free (fnl_name);
+	if (fnl_name) {
+		sdb_bool_set (TDB, K_NORET_FUNC (fnl_name), true, 0);
+		free (fnl_name);
+	}
 	return true;
 }
 
 static int is_func(void *p, const char *k, const char *v) {
-	return !strcmp (v, "func");
+	if (!strstr (k, "noreturn")) {
+		return 0;
+	}
+	// eprintf ("FILTER (%s) %s\n", k, v);
+	return !strcmp (v, "func") || !strcmp (v, "addr");
 }
 
 R_API int r_anal_noreturn_drop(RAnal *anal, const char *expr) {
 	Sdb *TDB = anal->sdb_types;
-	if (!strcmp (expr, "*")) {
-		SdbList *noreturns = sdb_foreach_list_filter (TDB, is_func, false);
-		SdbListIter *it;
-		SdbKv *kv;
-
-		ls_foreach (noreturns, it, kv) {
-			sdb_unset (TDB, K_NORET_FUNC(sdbkv_key (kv)), 0);
-		}
-		ls_free (noreturns);
-		return true;
-	} else {
-		const char *fcnname = NULL;
-		char *tmp;
-		if (!strncmp (expr, "0x", 2)) {
-			ut64 n = r_num_math (NULL, expr);
-			RAnalFunction *fcn = r_anal_get_fcn_in (anal, n, -1);
-			if (!fcn) {
-				eprintf ("can't find function at 0x%"PFMT64x"\n", n);
-				return false;
-			}
-			fcnname = fcn->name;
-		} else {
-			fcnname = expr;
-		}
-		if (r_type_func_exist (TDB, fcnname)) {
-			sdb_unset (TDB, K_NORET_FUNC (fcnname), 0);
-			return true;
-		} else if ((tmp = r_type_func_guess (TDB, (char *)fcnname))) {
-			sdb_unset (TDB, K_NORET_FUNC (fcnname), 0);
-			free (tmp);
-			return true;
-		} else {
-			eprintf ("Cant find prototype for %s in types databse", fcnname);
+	expr = r_str_trim_ro (expr);
+	const char *fcnname = NULL;
+	if (!strncmp (expr, "0x", 2)) {
+		ut64 n = r_num_math (NULL, expr);
+		sdb_unset (TDB, K_NORET_ADDR (n), 0);
+		RAnalFunction *fcn = r_anal_get_fcn_in (anal, n, -1);
+		if (!fcn) {
+			// eprintf ("can't find function at 0x%"PFMT64x"\n", n);
 			return false;
 		}
+		fcnname = fcn->name;
+	} else {
+		fcnname = expr;
 	}
+	sdb_unset (TDB, K_NORET_FUNC (fcnname), 0);
+#if 0
+	char *tmp;
+	// unnsecessary checks, imho the noreturn db should be pretty simple to allow forward and custom declarations without having to define the function prototype before
+	if (r_type_func_exist (TDB, fcnname)) {
+		sdb_unset (TDB, K_NORET_FUNC (fcnname), 0);
+		return true;
+	} else if ((tmp = r_type_func_guess (TDB, (char *)fcnname))) {
+		sdb_unset (TDB, K_NORET_FUNC (fcnname), 0);
+		free (tmp);
+		return true;
+	}
+	eprintf ("Cant find prototype for %s in types databse", fcnname);
+#endif
+	return false;
 }
 
 static bool r_anal_noreturn_at_name(RAnal *anal, const char *name) {
@@ -642,6 +683,9 @@ static bool r_anal_noreturn_at_name(RAnal *anal, const char *name) {
 		}
 		free (tmp);
 	}
+	if (r_str_startswith (name, "reloc.")) {
+		return r_anal_noreturn_at_name (anal, name + 6);
+	}
 	return false;
 }
 
@@ -649,7 +693,7 @@ R_API bool r_anal_noreturn_at_addr(RAnal *anal, ut64 addr) {
 	return sdb_bool_get (anal->sdb_types, K_NORET_ADDR (addr), NULL);
 }
 
-bool noreturn_recurse(RAnal *anal, ut64 addr) {
+static bool noreturn_recurse(RAnal *anal, ut64 addr) {
 	RAnalOp op = {0};
 	ut8 bbuf[0x10] = {0};
 	ut64 recurse_addr = UT64_MAX;
@@ -657,8 +701,9 @@ bool noreturn_recurse(RAnal *anal, ut64 addr) {
 		eprintf ("Couldn't read buffer\n");
 		return false;
 	}
-	// TODO: check return value
-	(void)r_anal_op (anal, &op, addr, bbuf, sizeof (bbuf), R_ANAL_OP_MASK_BASIC);
+	if (r_anal_op (anal, &op, addr, bbuf, sizeof (bbuf), R_ANAL_OP_MASK_BASIC | R_ANAL_OP_MASK_VAL) < 1) {
+		return false;
+	}
 	switch (op.type & R_ANAL_OP_TYPE_MASK) {
 	case R_ANAL_OP_TYPE_JMP:
 		if (op.jump == UT64_MAX) {
@@ -695,7 +740,7 @@ R_API bool r_anal_noreturn_at(RAnal *anal, ut64 addr) {
 			return true;
 		}
 	}
-	RFlagItem *fi = r_flag_get_i2 (anal->flb.f, addr);
+	RFlagItem *fi = anal->flag_get (anal->flb.f, addr);
 	if (fi) {
 		if (r_anal_noreturn_at_name (anal, fi->name)) {
 			return true;

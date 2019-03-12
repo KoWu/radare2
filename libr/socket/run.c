@@ -48,6 +48,7 @@
 #if defined(__APPLE__) || defined(__NetBSD__) || defined(__OpenBSD__)
 #include <util.h>
 #elif defined(__FreeBSD__) || defined(__DragonFly__)
+#include <sys/sysctl.h>
 #include <libutil.h>
 #endif
 #endif
@@ -86,7 +87,7 @@ R_API bool r_run_parse(RRunProfile *pf, const char *profile) {
 		return false;
 	}
 	r_str_replace_char (str, '\r',0);
-	for (o = p = str; (o = strchr (p, '\n')); p = o) {
+	for (p = str; (o = strchr (p, '\n')); p = o) {
 		*o++ = 0;
 		r_run_parseline (pf, p);
 	}
@@ -226,33 +227,17 @@ static int parseBool(const char *e) {
 		0: 1): 1): 1): 1);
 }
 
-#if __linux__
-#define RVAS "/proc/sys/kernel/randomize_va_space"
-static void setRVA(const char *v) {
-	int fd = open (RVAS, O_WRONLY);
-	if (fd != -1) {
-		write (fd, v, 2);
-		close (fd);
-	}
-}
-#endif
-
 // TODO: move into r_util? r_run_... ? with the rest of funcs?
 static void setASLR(RRunProfile *r, int enabled) {
 #if __linux__
-	if (enabled) {
-		setRVA ("2\n");
-	} else {
-#if __ANDROID__
-		setRVA ("0\n");
-#else
-#if HAVE_DECL_ADDR_NO_RANDOMIZE
-		if (personality (ADDR_NO_RANDOMIZE) == -1) {
+	r_sys_aslr (enabled);
+#if HAVE_DECL_ADDR_NO_RANDOMIZE && !__ANDROID__
+	if (personality (ADDR_NO_RANDOMIZE) == -1) {
 #endif
-			setRVA ("0\n");
-		}
-#endif
+		r_sys_aslr (0);
+#if HAVE_DECL_ADDR_NO_RANDOMIZE && !__ANDROID__
 	}
+#endif
 #elif __APPLE__
 	// TOO OLD setenv ("DYLD_NO_PIE", "1", 1);
 	// disable this because its
@@ -266,6 +251,8 @@ static void setASLR(RRunProfile *r, int enabled) {
 	// for osxver>=10.7
 	// "unset the MH_PIE bit in an already linked executable" with --no-pie flag of the script
 	// the right way is to disable the aslr bit in the spawn call
+#elif __FreeBSD__
+	r_sys_aslr (enabled);
 #else
 	// not supported for this platform
 #endif
@@ -378,8 +365,17 @@ static int handle_redirection(const char *cmd, bool in, bool out, bool err) {
 		if (in) {
 			int pipes[2];
 			if (pipe (pipes) != -1) {
-				write (pipes[1], cmd + 1, strlen (cmd)-2);
-				write (pipes[1], "\n", 1);
+				size_t cmdl = strlen (cmd)-2;
+				if (write (pipes[1], cmd + 1, cmdl) != cmdl) {
+					eprintf ("[ERROR] rarun2: Cannot write to the pipe\n");
+					close (0);
+					return 1;
+				}
+				if (write (pipes[1], "\n", 1) != 1) {
+					eprintf ("[ERROR] rarun2: Cannot write to the pipe\n");
+					close (0);
+					return 1;
+				}
 				close (0);
 				dup2 (pipes[0], 0);
 			} else {
@@ -884,7 +880,11 @@ R_API int r_run_config_env(RRunProfile *p) {
 				eprintf ("Cannot chroot to %s\n", p->_chroot);
 				return 1;
 			} else {
-				(void) chdir ("/");
+				// Silenting pedantic meson flags...
+				if (chdir ("/") == -1) {
+					eprintf ("Cannot chdir to /\n");
+					return 1;
+				}
 				if (p->_chgdir) {
 					if (chdir (p->_chgdir) == -1) {
 						eprintf ("Cannot chdir after chroot to %s\n", p->_chgdir);
@@ -948,7 +948,10 @@ R_API int r_run_config_env(RRunProfile *p) {
 		}
 		inp = getstr (p->_input);
 		if (inp) {
-			write (f2[1], inp, strlen (inp));
+			size_t inpl = strlen (inp);
+			if  (write (f2[1], inp, inpl) != inpl) {
+				eprintf ("[ERROR] rarun2: Cannot write to the pipe\n");
+			}
 			close (f2[1]);
 			free (inp);
 		} else {

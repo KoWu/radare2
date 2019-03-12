@@ -502,7 +502,6 @@ static void rcc_pushstr(REgg *egg, char *str, int filter) {
 					dotrim = 3;
 					break;
 				default:
-					dotrim = 0;
 					break;
 				}
 				if (dotrim) {
@@ -912,7 +911,9 @@ static int parsedatachar(REgg *egg, char c) {
 			}
 		}
 	}
-	egg->lang.dstval[egg->lang.ndstval++] = c;
+	if (egg->lang.dstval) {
+		egg->lang.dstval[egg->lang.ndstval++] = c;
+	}
 	return 0;
 }
 

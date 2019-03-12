@@ -523,7 +523,6 @@ grub_jfs_getent (struct grub_jfs_diropen *diro)
     }
 
   leaf = &diro->leaf[(int) diro->sorted[diro->index]];
-  next_leaf = &diro->next_leaf[diro->index];
 
   len = leaf->len;
   if (!len)
@@ -796,7 +795,7 @@ grub_jfs_dir (grub_device_t device, const char *path,
   if (hook)
   while (grub_jfs_getent (diro) != GRUB_ERR_OUT_OF_RANGE)
     {
-      struct grub_jfs_inode inode;
+      struct grub_jfs_inode inode = {0};
       struct grub_dirhook_info info;
       grub_memset (&info, 0, sizeof (info));
 

@@ -16,6 +16,8 @@
 #define IFDBG if (DO_THE_DBG)
 #define IFINT if (0)
 
+#define MIPS_PLT_OFFSET 108
+
 #define ELF_PAGE_MASK 0xFFFFFFFFFFFFF000LL
 #define ELF_PAGE_SIZE 12
 
@@ -24,6 +26,8 @@
 #define R_ELF_FULL_RELRO 2
 
 #define bprintf if(bin->verbose) R_LOG_WARN
+
+#define MAX_REL_RELA_SZ (sizeof (Elf_(Rel)) > sizeof (Elf_(Rela))? sizeof (Elf_(Rel)): sizeof (Elf_(Rela)))
 
 #define READ8(x, i) r_read_ble8((x) + (i)); (i) += 1
 #define READ16(x, i) r_read_ble16((x) + (i), bin->endian); (i) += 2
@@ -90,6 +94,10 @@ static inline int __strnlen(const char *str, int len) {
 		l++;
 	}
 	return l + 1;
+}
+
+static bool is_bin_etrel(ELFOBJ *bin) {
+	return bin->ehdr.e_type == ET_REL;
 }
 
 static int handle_e_ident(ELFOBJ *bin) {
@@ -363,7 +371,7 @@ static int init_shdr(ELFOBJ *bin) {
 }
 
 static bool is_shidx_valid(ELFOBJ *bin, Elf_(Half) value) {
-	return value < bin->ehdr.e_shnum && !R_BETWEEN (SHN_LORESERVE, value, SHN_HIRESERVE);
+	return value >= 0 && value < bin->ehdr.e_shnum && !R_BETWEEN (SHN_LORESERVE, value, SHN_HIRESERVE);
 }
 
 static int init_strtab(ELFOBJ *bin) {
@@ -625,7 +633,7 @@ static Sdb *store_versioninfo_gnu_versym(ELFOBJ *bin, Elf_(Shdr) *shdr, int sz) 
 		return NULL;
 	}
 	Elf_(Shdr) *link_shdr = &bin->shdr[shdr->sh_link];
-	ut8 *edata = (ut8*) calloc (R_MAX (1, num_entries), sizeof (ut16));
+	ut8 *edata = (ut8*) calloc (R_MAX (1, num_entries), 2 * sizeof (ut8));
 	if (!edata) {
 		sdb_free (sdb);
 		return NULL;
@@ -802,8 +810,9 @@ static Sdb *store_versioninfo_gnu_verdef(ELFOBJ *bin, Elf_(Shdr) *shdr, int sz) 
 	if (shdr->sh_size < sizeof (Elf_(Verdef)) || shdr->sh_size < sizeof (Elf_(Verdaux))) {
 		return false;
 	}
-	Elf_(Verdef) *defs = calloc (shdr->sh_size, sizeof (char));
+	Elf_(Verdef) *defs = calloc (shdr->sh_size, 1);
 	if (!defs) {
+		bprintf ("Cannot allocate memory (Check Elf_(Verdef))\n");
 		return false;
 	}
 	if (bin->shstrtab && shdr->sh_name < bin->shstrtab_size) {
@@ -811,10 +820,6 @@ static Sdb *store_versioninfo_gnu_verdef(ELFOBJ *bin, Elf_(Shdr) *shdr, int sz) 
 	}
 	if (link_shdr && bin->shstrtab && link_shdr->sh_name < bin->shstrtab_size) {
 		link_section_name = &bin->shstrtab[link_shdr->sh_name];
-	}
-	if (!defs) {
-		bprintf ("Cannot allocate memory (Check Elf_(Verdef))\n");
-		return NULL;
 	}
 	sdb = sdb_new0 ();
 	end = (char *)defs + shdr->sh_size;
@@ -1192,7 +1197,7 @@ static int elf_init(ELFOBJ *bin) {
 	if (!init_ehdr (bin)) {
 		return false;
 	}
-	if (!init_phdr (bin)) {
+	if (!init_phdr (bin) && !is_bin_etrel (bin)) {
 		bprintf ("Cannot initialize program headers\n");
 	}
 	if (bin->ehdr.e_type != ET_CORE) {
@@ -1202,11 +1207,11 @@ static int elf_init(ELFOBJ *bin) {
 		if (!init_strtab (bin)) {
 			bprintf ("Cannot initialize strings table\n");
 		}
-		if (!init_dynstr (bin)) {
+		if (!init_dynstr (bin) && !is_bin_etrel (bin)) {
 			bprintf ("Cannot initialize dynamic strings\n");
 		}
 		bin->baddr = Elf_(r_bin_elf_get_baddr) (bin);
-		if (!init_dynamic_section (bin) && !Elf_(r_bin_elf_is_static) (bin)) {
+		if (!init_dynamic_section (bin) && !Elf_(r_bin_elf_is_static) (bin) && !is_bin_etrel (bin)) {
 			bprintf ("Cannot initialize dynamic section\n");
 		}
 	}
@@ -1239,315 +1244,434 @@ ut64 Elf_(r_bin_elf_get_section_addr_end)(ELFOBJ *bin, const char *section_name)
 	RBinElfSection *section = get_section_by_name (bin, section_name);
 	return section? section->rva + section->size: UT64_MAX;
 }
-#define REL (is_rela ? (void*)rela : (void*)rel)
-#define REL_BUF is_rela ? (ut8*)(&rela[k]) : (ut8*)(&rel[k])
-#define REL_OFFSET is_rela ? rela[k].r_offset : rel[k].r_offset
-#define REL_TYPE is_rela ? rela[k].r_info  : rel[k].r_info
 
-static ut64 get_import_addr(ELFOBJ *bin, int sym) {
-	Elf_(Rel) *rel = NULL;
-	Elf_(Rela) *rela = NULL;
-	ut8 rl[sizeof (Elf_(Rel))] = {0};
-	ut8 rla[sizeof (Elf_(Rela))] = {0};
+#define REL_OFFSET (rel->is_rela? rel->r.rela.r_offset: rel->r.rel.r_offset)
+#define REL_INFO (rel->is_rela? rel->r.rela.r_info: rel->r.rel.r_info)
+#define REL_SYM (ELF_R_SYM (REL_INFO))
+#define REL_TYPE (ELF_R_TYPE (REL_INFO))
+
+struct ht_rel_t {
+	union {
+		Elf_(Rel) rel;
+		Elf_(Rela) rela;
+	} r;
+	bool is_rela;
+	int k;
+};
+
+static RBinElfSection *get_rel_sec(ELFOBJ *bin, const char **sects) {
 	RBinElfSection *rel_sec = NULL;
-	ut64 plt_sym_addr = -1;
-	ut64 got_addr, got_offset;
-	ut64 plt_addr;
-	int j, k, tsize, len, nrel;
-	bool is_rela = false;
+	int j = 0;
+	while (!rel_sec && sects[j]) {
+		rel_sec = get_section_by_name (bin, sects[j++]);
+	}
+	return rel_sec;
+}
+
+static void read_rel(ELFOBJ *bin, Elf_(Rel) *rel, ut8 *rl) {
+	int l = 0;
+	rel->r_offset = READWORD (rl, l);
+	rel->r_info = READWORD (rl, l);
+}
+
+static void read_rela(ELFOBJ *bin, Elf_(Rela) *rela, ut8 *rl) {
+	int l = 0;
+	rela->r_offset = READWORD (rl, l);
+	rela->r_info = READWORD (rl, l);
+	rela->r_addend = READWORD (rl, l);
+}
+
+static struct ht_rel_t *read_ht_rel(ELFOBJ *bin, ut8 *rl, int k) {
+	struct ht_rel_t *rel = R_NEW0 (struct ht_rel_t);
+	if (!rel) {
+		return NULL;
+	}
+
+	rel->is_rela = bin->is_rela == DT_RELA;
+	rel->k = k;
+	if (rel->is_rela) {
+		read_rela (bin, &rel->r.rela, rl);
+	} else {
+		read_rel (bin, &rel->r.rel, rl);
+	}
+	return rel;
+}
+
+static void rel_cache_free(HtUPKv *kv) {
+	free (kv->value);
+}
+
+static HtUP *rel_cache_new(ELFOBJ *bin) {
+	ut8 rl[MAX_REL_RELA_SZ] = { 0 };
+	RBinElfSection *rel_sec = NULL;
+	int j, k, tsize, nrel;
 	const char *rel_sect[] = { ".rel.plt", ".rela.plt", ".rel.dyn", ".rela.dyn", NULL };
 	const char *rela_sect[] = { ".rela.plt", ".rel.plt", ".rela.dyn", ".rel.dyn", NULL };
+	HtUP *rel_cache;
+
 	if ((!bin->shdr || !bin->strtab) && !bin->phdr) {
-		return -1;
+		return NULL;
 	}
-	if ((got_offset = Elf_(r_bin_elf_get_section_offset) (bin, ".got")) == -1 &&
-		(got_offset = Elf_(r_bin_elf_get_section_offset) (bin, ".got.plt")) == -1) {
-		return -1;
-	}
-	if ((got_addr = Elf_(r_bin_elf_get_section_addr) (bin, ".got")) == -1 &&
-		(got_addr = Elf_(r_bin_elf_get_section_addr) (bin, ".got.plt")) == -1) {
-		return -1;
-	}
-	RBinElfSection *plt_section = get_section_by_name (bin, ".plt");
+
 	if (bin->is_rela == DT_REL) {
-		j = 0;
-		while (!rel_sec && rel_sect[j]) {
-			rel_sec = get_section_by_name (bin, rel_sect[j++]);
-		}
+		rel_sec = get_rel_sec (bin, rel_sect);
 		tsize = sizeof (Elf_(Rel));
 	} else if (bin->is_rela == DT_RELA) {
-		j = 0;
-		while (!rel_sec && rela_sect[j]) {
-			rel_sec = get_section_by_name (bin, rela_sect[j++]);
-		}
-		is_rela = true;
+		rel_sec = get_rel_sec (bin, rela_sect);
 		tsize = sizeof (Elf_(Rela));
 	}
-	if (!rel_sec) {
-		return -1;
+	if (!rel_sec || rel_sec->size < 1) {
+		return NULL;
 	}
-	if (rel_sec->size < 1) {
-		return -1;
-	}
-	nrel = (ut32)((int)rel_sec->size / (int)tsize);
+
+	nrel = (ut32) ((int)rel_sec->size / (int)tsize);
 	if (nrel < 1) {
-		return -1;
+		return NULL;
 	}
-	if (is_rela) {
-		rela = calloc (nrel, tsize);
-		if (!rela) {
-			return -1;
-		}
-	} else {
-		rel = calloc (nrel, tsize);
-		if (!rel) {
-			return -1;
-		}
-	}
+
+	rel_cache = ht_up_new_size (nrel, NULL, rel_cache_free, NULL);
+
 	for (j = k = 0; j < rel_sec->size && k < nrel; j += tsize, k++) {
-		int l = 0;
 		if (rel_sec->offset + j > bin->size) {
 			goto out;
 		}
 		if (rel_sec->offset + j + tsize > bin->size) {
 			goto out;
 		}
-		len = r_buf_read_at (
-			bin->b, rel_sec->offset + j, is_rela ? rla : rl,
-			is_rela ? sizeof (Elf_ (Rela)) : sizeof (Elf_ (Rel)));
+		int len = r_buf_read_at (bin->b, rel_sec->offset + j, rl, tsize);
 		if (len < 1) {
 			goto out;
 		}
-#if R_BIN_ELF64
-		if (is_rela) {
-			rela[k].r_offset = READ64 (rla, l);
-			rela[k].r_info = READ64 (rla, l);
-			rela[k].r_addend = READ64 (rla, l);
-		} else {
-			rel[k].r_offset = READ64 (rl, l);
-			rel[k].r_info = READ64 (rl, l);
+
+		struct ht_rel_t *rel = read_ht_rel (bin, rl, k);
+		if (!rel) {
+			goto out;
 		}
-#else
-		if (is_rela) {
-			rela[k].r_offset = READ32 (rla, l);
-			rela[k].r_info = READ32 (rla, l);
-			rela[k].r_addend = READ32 (rla, l);
-		} else {
-			rel[k].r_offset = READ32 (rl, l);
-			rel[k].r_info = READ32 (rl, l);
-		}
-#endif
-		int reloc_type = ELF_R_TYPE (REL_TYPE);
-		int reloc_sym = ELF_R_SYM (REL_TYPE);
 
-		if (reloc_sym == sym) {
-			int of = REL_OFFSET;
-			of = of - got_addr + got_offset;
-			switch (bin->ehdr.e_machine) {
-			case EM_PPC:
-			case EM_PPC64:
-				{
-				RBinElfSection *s = plt_section;
-				if (s) {
-					ut8 buf[4] = {0};
-					len = r_buf_read_at (bin->b, s->offset, buf, sizeof (buf));
-					if (len < 4) {
-						goto out;
-					}
-					if (bin->endian) {
-						ut64 base = r_read_be32 (buf);
-						base -= (nrel * 16);
-						base += (k * 16);
-						plt_addr = base;
-					} else {
-						if (is_rela && rel_sec) {
-							len = r_buf_read_at (bin->b, rel_sec->offset, buf, sizeof (buf));
-							if (len < 4) {
-								goto out;
-							}
-						}
-						ut64 base = r_read_le32 (buf);
-						base -= (nrel * 12) + 20;
-						base += (k * 8);
-						plt_addr = base;
-					}
-					free (REL);
-					return plt_addr;
-				}
-				}
-				break;
-			case EM_SPARC:
-			case EM_SPARCV9:
-			case EM_SPARC32PLUS:
-				plt_addr = Elf_(r_bin_elf_get_section_addr) (bin, ".plt");
-				if (plt_addr == -1) {
-					free (rela);
-					return -1;
-				}
-				if (reloc_type == R_386_PC16) {
-					plt_addr += k * 12 + 20;
-					// thumb symbol
-					if (plt_addr & 1) {
-						plt_addr--;
-					}
-					free (REL);
-					return plt_addr;
-				} else {
-					bprintf ("Unknown sparc reloc type %d\n", reloc_type);
-				}
-				/* SPARC */
-				break;
-			case EM_ARM:
-			case EM_AARCH64:
-				plt_addr = Elf_(r_bin_elf_get_section_addr) (bin, ".plt");
-				if (plt_addr == -1) {
-					free (rela);
-					return UT32_MAX;
-				}
-				switch (reloc_type) {
-				case R_386_8:
-					{
-						plt_addr += k * 12 + 20;
-						// thumb symbol
-						if (plt_addr & 1) {
-							plt_addr--;
-						}
-						free (REL);
-						return plt_addr;
-					}
-					break;
-				case 1026: // arm64 aarch64
-					plt_sym_addr = plt_addr + k * 16 + 32;
-					goto done;
-				default:
-					bprintf ("Unsupported relocation type for imports %d\n", reloc_type);
-					break;
-				}
-				break;
-			case EM_386:
-			case EM_X86_64:
-				switch (reloc_type) {
-				case 1: // unknown relocs found in voidlinux for x86-64
-					// break;
-				case R_386_GLOB_DAT:
-				case R_386_JMP_SLOT:
-					{
-					ut8 buf[8];
-					if (of + sizeof(Elf_(Addr)) < bin->size) {
-						// ONLY FOR X86
-						if (of > bin->size || of + sizeof (Elf_(Addr)) > bin->size) {
-							goto out;
-						}
-						len = r_buf_read_at (bin->b, of, buf, sizeof (Elf_(Addr)));
-						if (len < -1) {
-							goto out;
-						}
-						plt_sym_addr = sizeof (Elf_(Addr)) == 4
-									 ? r_read_le32 (buf)
-									 : r_read_le64 (buf);
+		ht_up_insert (rel_cache, REL_SYM, rel);
+	}
+	return rel_cache;
+out:
+	ht_up_free (rel_cache);
+	return NULL;
+}
 
-						if (!plt_sym_addr) {
-							//XXX HACK ALERT!!!! full relro?? try to fix it 
-							//will there always be .plt.got, what would happen if is .got.plt?
-							RBinElfSection *s = get_section_by_name (bin, ".plt.got");
- 							if (Elf_(r_bin_elf_has_relro)(bin) < R_ELF_PART_RELRO || !s) {
-								goto done;
-							}
-							plt_addr = s->offset;
-							of = of + got_addr - got_offset;
-							while (plt_addr + 2 + 4 < s->offset + s->size) {
-								/*we try to locate the plt entry that correspond with the relocation
-								  since got does not point back to .plt. In this case it has the following 
-								  form
-
-								  ff253a152000   JMP QWORD [RIP + 0x20153A]
-								  6690		     NOP
-								  ----
-								  ff25ec9f0408   JMP DWORD [reloc.puts_236]
-
-								  plt_addr + 2 to remove jmp opcode and get the imm reading 4
-								  and if RIP (plt_addr + 6) + imm == rel->offset 
-								  return plt_addr, that will be our sym addr
-
-								  perhaps this hack doesn't work on 32 bits
-								 */
-								len = r_buf_read_at (bin->b, plt_addr + 2, buf, 4);
-								if (len < -1) {
-									goto out;
-								}
-								plt_sym_addr = sizeof (Elf_(Addr)) == 4
-										? r_read_le32 (buf)
-										: r_read_le64 (buf);
-
-								//relative address
-								if ((plt_addr + 6 + Elf_(r_bin_elf_v2p) (bin, plt_sym_addr)) == of) {
-									plt_sym_addr = plt_addr;
-									goto done;
-								} else if (plt_sym_addr == of) {
-									plt_sym_addr = plt_addr;
-									goto done;
-								}
-								plt_addr += 8;
-							}
-						} else {
-							plt_sym_addr -= 6;
-						}
-						goto done;
-					}
-					break;
-					}
-				default:
-					bprintf ("Unsupported relocation type for imports %d\n", reloc_type);
-					free (REL);
-					return of;
-					break;
-				}
-				break;
-			case 8:
-				// MIPS32 BIG ENDIAN relocs
-				{
-					RBinElfSection *s = get_section_by_name (bin, ".rela.plt");
-					if (s) {
-						ut8 buf[1024];
-						const ut8 *base;
-						plt_addr = s->rva + s->size;
-						len = r_buf_read_at (bin->b, s->offset + s->size, buf, sizeof (buf));
-						if (len != sizeof (buf)) {
-							// oops
-						}
-						base = r_mem_mem_aligned (buf, sizeof (buf), (const ut8*)"\x3c\x0f\x00", 3, 4);
-						if (base) {
-							plt_addr += (int)(size_t)(base - buf);
-						} else {
-							plt_addr += 108 + 8; // HARDCODED HACK
-						}
-						plt_addr += k * 16;
-						free (REL);
-						return plt_addr;
-					} else if (plt_section) {
-						const int sizeOfProcedureLinkageTable = 32;
-						const int sizeOfPltEntry = 16;
-						free (REL);
-						return plt_section->rva + sizeOfProcedureLinkageTable + (k * sizeOfPltEntry);
-					} else {
-						eprintf ("Unsupported relocs type %d for arch %d\n",
-								reloc_type, bin->ehdr.e_machine);
-					}
-				}
-				break;
+static ut64 get_dyn_entry(ELFOBJ *bin, int dyn_entry) {
+	int i;
+	for (i = 0; i < bin->dyn_entries; i++) {
+		if (bin->dyn_buf[i].d_tag == dyn_entry) {
+			switch (bin->dyn_buf[i].d_tag) {
+			case DT_REL:
+			case DT_RELA:
+			case DT_PLTGOT:
+			case DT_JMPREL:
+				return bin->dyn_buf[i].d_un.d_ptr;
+			case DT_RELSZ:
+			case DT_RELASZ:
+			case DT_PLTRELSZ:
+				return bin->dyn_buf[i].d_un.d_val;
 			default:
-				eprintf ("Unsupported relocs type %d for arch %d\n",
-					reloc_type, bin->ehdr.e_machine);
+				r_warn_if_reached ();
 				break;
 			}
 		}
 	}
-done:
-	free (REL);
-	return plt_sym_addr;
-out:
-	free (REL);
+
 	return -1;
+}
+
+static ut64 get_got_addr(ELFOBJ *bin) {
+	ut64 ret = get_dyn_entry (bin, DT_PLTGOT);
+	if (ret != -1) {
+		return ret;
+	}
+
+	ret = Elf_(r_bin_elf_get_section_addr) (bin, ".got");
+	if (ret) {
+		return ret;
+	}
+
+	ret = Elf_(r_bin_elf_get_section_addr) (bin, ".got.plt");
+	if (ret) {
+		return ret;
+	}
+
+	return -1;
+}
+
+static ut64 get_import_addr_ppc(ELFOBJ *bin, struct ht_rel_t *rel, RBinElfSection *plt_section, int nrel) {
+	ut8 buf[4] = { 0 };
+	if (!plt_section) {
+		return -1;
+	}
+	int len = r_buf_read_at (bin->b, plt_section->offset, buf, sizeof (buf));
+	if (len < 4) {
+		return -1;
+	}
+
+	if (bin->endian) {
+		ut64 base = r_read_be32 (buf);
+		base -= (nrel * 16);
+		base += (rel->k * 16);
+		return base;
+	}
+	// FIXME: this does not seem to work as
+	// expected. Commenting for now because it makes
+	// refactoring much easier and it seems weird
+	// anyway.
+	// if (bin->is_rela == DT_RELA) {
+	// 	len = r_buf_read_at (bin->b, rel_sec->offset, buf, sizeof (buf));
+	// 	if (len < 4) {
+	// 		goto out;
+	//	}
+	// }
+	ut64 base = r_read_le32 (buf);
+	base -= (nrel * 12) + 20;
+	base += (rel->k * 8);
+	return base;
+}
+
+static ut64 get_import_addr_sparc(ELFOBJ *bin, struct ht_rel_t *rel, RBinElfSection *plt_section) {
+	if (!plt_section) {
+		return UT64_MAX;
+	}
+	ut64 plt_addr = plt_section->rva;
+	switch (REL_TYPE) {
+	case R_SPARC_JMP_SLOT:
+		plt_addr += rel->k * 12 + 20;
+		// thumb symbol
+		if (plt_addr & 1) {
+			plt_addr--;
+		}
+		return plt_addr;
+	default:
+		bprintf ("Unknown sparc reloc type %d\n", REL_TYPE);
+		return UT64_MAX;
+	}
+}
+
+static ut64 get_import_addr_arm(ELFOBJ *bin, struct ht_rel_t *rel, RBinElfSection *plt_section) {
+	if (!plt_section) {
+		return UT32_MAX;
+	}
+	ut64 plt_addr = plt_section->rva;
+	switch (REL_TYPE) {
+	case R_ARM_JUMP_SLOT: {
+		plt_addr += rel->k * 12 + 20;
+		// thumb symbol
+		if (plt_addr & 1) {
+			plt_addr--;
+		}
+		return plt_addr;
+	}
+	case R_AARCH64_JUMP_SLOT:
+		return plt_addr + rel->k * 16 + 32;
+	default:
+		bprintf ("Unsupported relocation type for imports %d\n", REL_TYPE);
+		return UT64_MAX;
+	}
+}
+
+static ut64 get_import_addr_x86(ELFOBJ *bin, struct ht_rel_t *rel, RBinElfSection *plt_section) {
+	ut64 plt_addr, plt_sym_addr = -1;
+	ut8 buf[sizeof (Elf_(Addr))];
+	int len;
+
+	RBinElfSection *pltsec_section = get_section_by_name (bin, ".plt.sec");
+	ut64 got_addr = get_got_addr (bin);
+	if (got_addr == -1) {
+		return UT64_MAX;
+	}
+
+	ut64 got_offset = Elf_(r_bin_elf_v2p_new) (bin, got_addr);
+	if (got_offset == UT64_MAX) {
+		return UT64_MAX;
+	}
+
+	ut64 of = REL_OFFSET - got_addr + got_offset;
+
+	switch (REL_TYPE) {
+	case 1: // unknown relocs found in voidlinux for x86-64
+		// break;
+	// case R_X86_64_GLOB_DAT:
+	// case R_X86_64_JUMP_SLOT:
+	case R_386_GLOB_DAT:
+	case R_386_JMP_SLOT:
+		if (of > bin->size || of + sizeof (Elf_(Addr)) >= bin->size) {
+			return UT64_MAX;
+		}
+
+		len = r_buf_read_at (bin->b, of, buf, sizeof (Elf_(Addr)));
+		if (len < -1) {
+			return UT64_MAX;
+		}
+		plt_sym_addr = sizeof (Elf_(Addr)) == 4
+			? r_read_le32 (buf)
+			: r_read_le64 (buf);
+
+		if (!plt_sym_addr) {
+			//XXX HACK ALERT!!!! full relro?? try to fix it
+			//will there always be .plt.got, what would happen if is .got.plt?
+			RBinElfSection *s = get_section_by_name (bin, ".plt.got");
+			if (Elf_(r_bin_elf_has_relro) (bin) < R_ELF_PART_RELRO || !s) {
+				return 0;
+			}
+			plt_addr = s->offset;
+			of = of + got_addr - got_offset;
+			while (plt_addr + 2 + 4 < s->offset + s->size) {
+				/*we try to locate the plt entry that correspond with the relocation
+					since got does not point back to .plt. In this case it has the following
+					form
+
+					ff253a152000   JMP QWORD [RIP + 0x20153A]
+					6690		     NOP
+					----
+					ff25ec9f0408   JMP DWORD [reloc.puts_236]
+
+					plt_addr + 2 to remove jmp opcode and get the imm reading 4
+					and if RIP (plt_addr + 6) + imm == rel->offset
+					return plt_addr, that will be our sym addr
+
+					perhaps this hack doesn't work on 32 bits
+					*/
+				len = r_buf_read_at (bin->b, plt_addr + 2, buf, 4);
+				if (len < -1) {
+					return UT64_MAX;
+				}
+				plt_sym_addr = sizeof (Elf_(Addr)) == 4
+					? r_read_le32 (buf)
+					: r_read_le64 (buf);
+
+				//relative address
+				if ((plt_addr + 6 + Elf_(r_bin_elf_v2p) (bin, plt_sym_addr)) == of) {
+					return plt_addr;
+				}
+				if (plt_sym_addr == of) {
+					return plt_addr;
+				}
+				plt_addr += 8;
+			}
+			return plt_sym_addr;
+		} else {
+			ut64 plt_sym_offset = Elf_(r_bin_elf_v2p_new) (bin, plt_sym_addr);
+			if (plt_sym_offset != UT64_MAX) {
+				len = r_buf_read_at (bin->b, plt_sym_offset - 6, buf, sizeof (buf));
+				if (len > 0 && buf[0] != 0xff) {
+					// the .plt section has been probably split in
+					// .plt and .plt.sec to support Intel MPX. See
+					// https://github.com/hjl-tools/x86-psABI
+					//
+					// This is the new layout of the .plt
+					//
+					//     endbr64
+					//     push 0
+					//     bnd jmp 0x4020
+					//
+					// The .plt.sec section has something like:
+					//
+					//     endbr64
+					//     bnd jmp qword reloc.__ctype_toupper_loc
+					//
+					if (pltsec_section) {
+						// if possible, returns the address in
+						// .plt.sec, which is the address called
+						// by call instructions
+						return pltsec_section->rva + rel->k * 16;
+					}
+					// plt_sym_addr in this case points to the start
+					// of .plt entry
+					return plt_sym_addr;
+				}
+			}
+			// this is a regular .plt section
+			//
+			//     jmp qword reloc.__ctype_toupper_loc
+			//     push 0
+			//     jmp 0x4020
+			//
+			return plt_sym_addr - 6;
+		}
+	default:
+		bprintf ("Unsupported relocation type for imports %d\n", REL_TYPE);
+		return of;
+	}
+}
+
+static ut64 get_import_addr_mips(ELFOBJ *bin, struct ht_rel_t *rel, RBinElfSection *plt_section) {
+	RBinElfSection *s = get_section_by_name (bin, ".rela.plt");
+	if (s) {
+		ut8 buf[1024];
+		const ut8 *base;
+		ut64 plt_addr = s->rva + s->size;
+		int len = r_buf_read_at (bin->b, s->offset + s->size, buf, sizeof (buf));
+		if (len != sizeof (buf)) {
+			// oops
+		}
+		base = r_mem_mem_aligned (buf, sizeof (buf), (const ut8 *)"\x3c\x0f\x00", 3, 4);
+		if (base) {
+			plt_addr += (int)(size_t) (base - buf);
+		} else {
+			plt_addr += MIPS_PLT_OFFSET + 8; // HARDCODED HACK
+		}
+		plt_addr += rel->k * 16;
+		return plt_addr;
+	}
+	if (plt_section) {
+		const int sizeOfProcedureLinkageTable = 32;
+		const int sizeOfPltEntry = 16;
+		return plt_section->rva + sizeOfProcedureLinkageTable + (rel->k * sizeOfPltEntry);
+	}
+
+	eprintf ("Unsupported relocs type %" PFMT64u " for arch %d\n",
+		(ut64)REL_TYPE, bin->ehdr.e_machine);
+	return UT64_MAX;
+}
+
+static ut64 get_import_addr(ELFOBJ *bin, int sym) {
+	int nrel;
+
+	if ((!bin->shdr || !bin->strtab) && !bin->phdr) {
+		return UT64_MAX;
+	}
+
+	// create rel/rela cache if not already there
+	if (!bin->rel_cache) {
+		bin->rel_cache = rel_cache_new (bin);
+		if (!bin->rel_cache) {
+			return UT64_MAX;
+		}
+	}
+
+	// lookup the right rel/rela entry
+	struct ht_rel_t *rel = ht_up_find (bin->rel_cache, sym, NULL);
+	if (!rel) {
+		return UT64_MAX;
+	}
+
+	RBinElfSection *plt_section = get_section_by_name (bin, ".plt");
+	nrel = bin->rel_cache->count;
+
+	switch (bin->ehdr.e_machine) {
+	case EM_PPC:
+	case EM_PPC64:
+		return get_import_addr_ppc (bin, rel, plt_section, nrel);
+	case EM_SPARC:
+	case EM_SPARCV9:
+	case EM_SPARC32PLUS:
+		return get_import_addr_sparc (bin, rel, plt_section);
+	case EM_ARM:
+	case EM_AARCH64:
+		return get_import_addr_arm (bin, rel, plt_section);
+	case EM_386:
+	case EM_X86_64:
+		return get_import_addr_x86 (bin, rel, plt_section);
+	case EM_MIPS: // MIPS32 BIG ENDIAN relocs
+		return get_import_addr_mips (bin, rel, plt_section);
+	default:
+		eprintf ("Unsupported relocs type %" PFMT64u " for arch %d\n",
+			(ut64) REL_TYPE, bin->ehdr.e_machine);
+		return UT64_MAX;
+	}
 }
 
 int Elf_(r_bin_elf_has_nx)(ELFOBJ *bin) {
@@ -1632,7 +1756,7 @@ ut64 Elf_(r_bin_elf_get_baddr)(ELFOBJ *bin) {
 			}
 		}
 	}
-	if (base == UT64_MAX && bin->ehdr.e_type == ET_REL) {
+	if (base == UT64_MAX && is_bin_etrel (bin)) {
 		//we return our own base address for ET_REL type
 		//we act as a loader for ELF
 		return 0x08000000;
@@ -2266,6 +2390,9 @@ char* Elf_(r_bin_elf_get_osabi_name)(ELFOBJ *bin) {
 				if (!strcmp (section_name, ".note.netbsd.ident")) {
 					return strdup ("netbsd");
 				}
+				if (!strcmp (section_name, ".note.android.ident")) {
+					return strdup ("android");
+				}
 			}
 		}
 	}
@@ -2513,7 +2640,7 @@ RBinElfReloc* Elf_(r_bin_elf_get_relocs)(ELFOBJ *bin) {
 			if (j + res > bin->g_sections[i].size) {
 				bprintf ("malformed file, relocation entry #%u is partially beyond the end of section %u.\n", rel, i);
 			}
-			if (bin->ehdr.e_type == ET_REL) {
+			if (is_bin_etrel (bin)) {
 				if (bin->g_sections[i].info < bin->ehdr.e_shnum && bin->shdr) {
 					ret[rel].rva = bin->shdr[bin->g_sections[i].info].sh_offset + ret[rel].offset;
 					ret[rel].rva = Elf_(r_bin_elf_p2v) (bin, ret[rel].rva);
@@ -2593,7 +2720,7 @@ static RBinElfSection *get_sections_from_phdr(ELFOBJ *bin) {
 	int i, num_sections = 0;
 	ut64 reldyn = 0, relava = 0, pltgotva = 0, relva = 0;
 	ut64 reldynsz = 0, relasz = 0, pltgotsz = 0;
-	if (!bin || !bin->phdr || !bin->ehdr.e_phnum) {
+	if (!bin || !bin->phdr || !bin->ehdr.e_phnum || !bin->dyn_buf) {
 		return NULL;
 	}
 
@@ -2664,7 +2791,7 @@ RBinElfSection* Elf_(r_bin_elf_get_sections)(ELFOBJ *bin) {
 		ret[i].link = bin->shdr[i].sh_link;
 		ret[i].info = bin->shdr[i].sh_info;
 		ret[i].type = bin->shdr[i].sh_type;
-		if (bin->ehdr.e_type == ET_REL) {
+		if (is_bin_etrel (bin)) {
 			ret[i].rva = bin->baddr + bin->shdr[i].sh_offset;
 		} else {
 			ret[i].rva = bin->shdr[i].sh_addr;
@@ -2694,8 +2821,33 @@ RBinElfSection* Elf_(r_bin_elf_get_sections)(ELFOBJ *bin) {
 	return ret;
 }
 
+static bool is_special_arm_symbol(ELFOBJ *bin, Elf_(Sym) *sym, const char *name) {
+	if (name[0] != '$') {
+		return false;
+	}
+	switch (name[1]) {
+	case 'a':
+	case 't':
+	case 'd':
+		return name[2] == '\0' && ELF_ST_TYPE (sym->st_info) == STT_NOTYPE &&
+			ELF_ST_BIND (sym->st_info) == STB_LOCAL &&
+			ELF_ST_VISIBILITY (sym->st_info) == STV_DEFAULT;
+	default:
+		return false;
+	}
+}
+
+static bool is_special_symbol(ELFOBJ *bin, Elf_(Sym) *sym, const char *name) {
+	switch (bin->ehdr.e_machine) {
+	case EM_ARM:
+		return is_special_arm_symbol (bin, sym, name);
+	default:
+		return false;
+	}
+}
+
 static const char *bind2str(Elf_(Sym) *sym) {
-	switch (ELF_ST_BIND(sym->st_info)) {
+	switch (ELF_ST_BIND (sym->st_info)) {
 	case STB_LOCAL:  return R_BIN_BIND_LOCAL_STR;
 	case STB_GLOBAL: return R_BIN_BIND_GLOBAL_STR;
 	case STB_WEAK:   return R_BIN_BIND_WEAK_STR;
@@ -2708,27 +2860,30 @@ static const char *bind2str(Elf_(Sym) *sym) {
 	}
 }
 
-static const char *type2str(Elf_(Sym) *sym) {
+static const char *type2str(ELFOBJ *bin, struct r_bin_elf_symbol_t *ret, Elf_(Sym) *sym) {
+	if (bin && ret && is_special_symbol (bin, sym, ret->name)) {
+		return R_BIN_TYPE_SPECIAL_SYM_STR;
+	}
 	switch (ELF_ST_TYPE (sym->st_info)) {
-	case STT_NOTYPE:  return R_BIN_TYPE_NOTYPE_STR;
-	case STT_OBJECT:  return R_BIN_TYPE_OBJECT_STR;
-	case STT_FUNC:    return R_BIN_TYPE_FUNC_STR;
+	case STT_NOTYPE: return R_BIN_TYPE_NOTYPE_STR;
+	case STT_OBJECT: return R_BIN_TYPE_OBJECT_STR;
+	case STT_FUNC: return R_BIN_TYPE_FUNC_STR;
 	case STT_SECTION: return R_BIN_TYPE_SECTION_STR;
-	case STT_FILE:    return R_BIN_TYPE_FILE_STR;
-	case STT_COMMON:  return R_BIN_TYPE_COMMON_STR;
-	case STT_TLS:     return R_BIN_TYPE_TLS_STR;
-	case STT_NUM:     return R_BIN_TYPE_NUM_STR;
-	case STT_LOOS:    return R_BIN_TYPE_LOOS_STR;
-	case STT_HIOS:    return R_BIN_TYPE_HIOS_STR;
-	case STT_LOPROC:  return R_BIN_TYPE_LOPROC_STR;
-	case STT_HIPROC:  return R_BIN_TYPE_HIPROC_STR;
-	default:          return R_BIN_TYPE_UNKNOWN_STR;
+	case STT_FILE: return R_BIN_TYPE_FILE_STR;
+	case STT_COMMON: return R_BIN_TYPE_COMMON_STR;
+	case STT_TLS: return R_BIN_TYPE_TLS_STR;
+	case STT_NUM: return R_BIN_TYPE_NUM_STR;
+	case STT_LOOS: return R_BIN_TYPE_LOOS_STR;
+	case STT_HIOS: return R_BIN_TYPE_HIOS_STR;
+	case STT_LOPROC: return R_BIN_TYPE_LOPROC_STR;
+	case STT_HIPROC: return R_BIN_TYPE_HIPROC_STR;
+	default: return R_BIN_TYPE_UNKNOWN_STR;
 	}
 }
 
-static void fill_symbol_bind_and_type (struct r_bin_elf_symbol_t *ret, Elf_(Sym) *sym) {
+static void fill_symbol_bind_and_type(ELFOBJ *bin, struct r_bin_elf_symbol_t *ret, Elf_(Sym) *sym) {
 	ret->bind = bind2str (sym);
-	ret->type = type2str (sym);
+	ret->type = type2str (bin, ret, sym);
 }
 
 static RBinElfSymbol* get_symbols_from_phdr(ELFOBJ *bin, int type) {
@@ -2826,14 +2981,14 @@ static RBinElfSymbol* get_symbols_from_phdr(ELFOBJ *bin, int type) {
 		bool is_vaddr = false;
 		// zero symbol is always empty
 		// Examine entry and maybe store
-		if (type == R_BIN_ELF_IMPORTS && sym[i].st_shndx == SHT_NULL) {
+		if (type == R_BIN_ELF_IMPORT_SYMBOLS && sym[i].st_shndx == SHT_NULL) {
 			if (sym[i].st_value) {
 				toffset = sym[i].st_value;
 			} else if ((toffset = get_import_addr (bin, i)) == -1){
 				toffset = 0;
 			}
 			tsize = 16;
-		} else if (type == R_BIN_ELF_SYMBOLS) {
+		} else if (type == R_BIN_ELF_ALL_SYMBOLS) {
 			tsize = sym[i].st_size;
 			toffset = (ut64) sym[i].st_value;
 			is_sht_null = sym[i].st_shndx == SHT_NULL;
@@ -2843,7 +2998,7 @@ static RBinElfSymbol* get_symbols_from_phdr(ELFOBJ *bin, int type) {
 		// since we don't know the size of the sym table in this case,
 		// let's stop at the first invalid entry
 		if (!strcmp (bind2str (&sym[i]), R_BIN_BIND_UNKNOWN_STR) ||
-		    !strcmp (type2str (&sym[i]), R_BIN_TYPE_UNKNOWN_STR)) {
+		    !strcmp (type2str (NULL, NULL, &sym[i]), R_BIN_TYPE_UNKNOWN_STR)) {
 			goto done;
 		}
 		tmp_offset = Elf_(r_bin_elf_v2p_new) (bin, toffset);
@@ -2876,7 +3031,7 @@ static RBinElfSymbol* get_symbols_from_phdr(ELFOBJ *bin, int type) {
 		ret[ret_ctr].ordinal = i;
 		ret[ret_ctr].in_shdr = false;
 		ret[ret_ctr].name[ELF_STRING_LENGTH - 2] = '\0';
-		fill_symbol_bind_and_type (&ret[ret_ctr], &sym[i]);
+		fill_symbol_bind_and_type (bin, &ret[ret_ctr], &sym[i]);
 		ret[ret_ctr].is_sht_null = is_sht_null;
 		ret[ret_ctr].is_vaddr = is_vaddr;
 		ret[ret_ctr].last = 0;
@@ -2901,14 +3056,14 @@ done:
 		ret = p;
 	}
 	ret[ret_ctr].last = 1;
-	if (type == R_BIN_ELF_IMPORTS && !bin->imports_by_ord_size) {
+	if (type == R_BIN_ELF_IMPORT_SYMBOLS && !bin->imports_by_ord_size) {
 		bin->imports_by_ord_size = ret_ctr + 1;
 		if (ret_ctr > 0) {
 			bin->imports_by_ord = (RBinImport * *) calloc (ret_ctr + 1, sizeof (RBinImport*));
 		} else {
 			bin->imports_by_ord = NULL;
 		}
-	} else if (type == R_BIN_ELF_SYMBOLS && !bin->symbols_by_ord_size && ret_ctr) {
+	} else if (type == R_BIN_ELF_ALL_SYMBOLS && !bin->symbols_by_ord_size && ret_ctr) {
 		bin->symbols_by_ord_size = ret_ctr + 1;
 		if (ret_ctr > 0) {
 			bin->symbols_by_ord = (RBinSymbol * *) calloc (ret_ctr + 1, sizeof (RBinSymbol*));
@@ -2931,7 +3086,7 @@ static RBinElfSymbol *Elf_(r_bin_elf_get_phdr_symbols)(ELFOBJ *bin) {
 	if (bin->phdr_symbols) {
 		return bin->phdr_symbols;
 	}
-	bin->phdr_symbols = get_symbols_from_phdr (bin, R_BIN_ELF_SYMBOLS);
+	bin->phdr_symbols = get_symbols_from_phdr (bin, R_BIN_ELF_ALL_SYMBOLS);
 	return bin->phdr_symbols;
 }
 
@@ -2942,12 +3097,12 @@ static RBinElfSymbol *Elf_(r_bin_elf_get_phdr_imports)(ELFOBJ *bin) {
 	if (bin->phdr_imports) {
 		return bin->phdr_imports;
 	}
-	bin->phdr_imports = get_symbols_from_phdr (bin, R_BIN_ELF_IMPORTS);
+	bin->phdr_imports = get_symbols_from_phdr (bin, R_BIN_ELF_IMPORT_SYMBOLS);
 	return bin->phdr_imports;
 }
 
 static RBinElfSymbol *Elf_(get_phdr_symbols)(ELFOBJ *bin, int type) {
-	return (type == R_BIN_ELF_SYMBOLS)
+	return (type != R_BIN_ELF_IMPORT_SYMBOLS)
 		? Elf_(r_bin_elf_get_phdr_symbols) (bin)
 		: Elf_(r_bin_elf_get_phdr_imports) (bin);
 }
@@ -2963,9 +3118,9 @@ static int Elf_(fix_symbols)(ELFOBJ *bin, int nsym, int type, RBinElfSymbol **sy
 			/* find match in phdr */
 			p = phdr_symbols;
 			while (!p->last) {
-				if (p->offset && d->offset == p->offset) {
+				if (d->offset == p->offset || p->ordinal == d->ordinal) {
 					p->in_shdr = true;
-					if (*p->name && strcmp (d->name, p->name)) {
+					if (*p->name && *d->name && r_str_startswith (d->name, "$")) {
 						strcpy (d->name, p->name);
 					}
 				}
@@ -3005,13 +3160,115 @@ static int Elf_(fix_symbols)(ELFOBJ *bin, int nsym, int type, RBinElfSymbol **sy
 	return nsym;
 }
 
+static bool is_section_local_sym(ELFOBJ *bin, Elf_(Sym) *sym) {
+	if (sym->st_name != 0) {
+		return false;
+	}
+	if (ELF_ST_TYPE (sym->st_info) != STT_SECTION) {
+		return false;
+	}
+	if (ELF_ST_BIND (sym->st_info) != STB_LOCAL) {
+		return false;
+	}
+	if (!is_shidx_valid (bin, sym->st_shndx)) {
+		return false;
+	}
+
+	Elf_(Word) sh_name = bin->shdr[sym->st_shndx].sh_name;
+	return bin->shstrtab && sh_name >= 0 && sh_name < bin->shstrtab_size;
+}
+
+static void setsymord(ELFOBJ* eobj, ut32 ord, RBinSymbol *ptr) {
+	if (!eobj->symbols_by_ord || ord >= eobj->symbols_by_ord_size) {
+		return;
+	}
+	r_bin_symbol_free (eobj->symbols_by_ord[ord]);
+	eobj->symbols_by_ord[ord] = ptr;
+}
+
+static void _set_arm_thumb_bits(struct Elf_(r_bin_elf_obj_t) *bin, RBinSymbol **sym) {
+	int bin_bits = Elf_(r_bin_elf_get_bits) (bin);
+	RBinSymbol *ptr = *sym;
+	int len = strlen (ptr->name);
+	if (ptr->name[0] == '$' && (len >= 2 && !ptr->name[2])) {
+		switch (ptr->name[1]) {
+		case 'a' : //arm
+			ptr->bits = 32;
+			break;
+		case 't': //thumb
+			ptr->bits = 16;
+			if (ptr->vaddr & 1) {
+				ptr->vaddr--;
+			}
+			if (ptr->paddr & 1) {
+				ptr->paddr--;
+			}
+			break;
+		case 'd': //data
+			break;
+		default:
+			goto arm_symbol;
+		}
+	} else {
+arm_symbol:
+		ptr->bits = bin_bits;
+		if (bin_bits != 64) {
+			ptr->bits = 32;
+			if (ptr->paddr != UT64_MAX) {
+				if (ptr->vaddr & 1) {
+					ptr->vaddr--;
+					ptr->bits = 16;
+				}
+				if (ptr->paddr & 1) {
+					ptr->paddr--;
+					ptr->bits = 16;
+				}
+			}
+		}
+	}
+}
+
+RBinSymbol *Elf_(_r_bin_elf_convert_symbol)(struct Elf_(r_bin_elf_obj_t) *bin,
+					  struct r_bin_elf_symbol_t *symbol,
+					  const char *namefmt) {
+	ut64 paddr, vaddr;
+	RBinSymbol *ptr = NULL;
+	if (symbol->is_vaddr) {
+		paddr = UT64_MAX;
+		vaddr = symbol->offset;
+	} else {
+		paddr = symbol->offset;
+		vaddr = Elf_(r_bin_elf_p2v_new) (bin, paddr);
+	}
+
+	if (!(ptr = R_NEW0 (RBinSymbol))) {
+		return NULL;
+	}
+	ptr->name = symbol->name[0] ? r_str_newf (namefmt, &symbol->name[0]) : strdup ("");
+	ptr->forwarder = r_str_const ("NONE");
+	ptr->bind = r_str_const (symbol->bind);
+	ptr->type = r_str_const (symbol->type);
+	ptr->paddr = paddr;
+	ptr->vaddr = vaddr;
+	ptr->size = symbol->size;
+	ptr->ordinal = symbol->ordinal;
+	// detect thumb
+	if (bin->ehdr.e_machine == EM_ARM && *ptr->name) {
+		_set_arm_thumb_bits (bin, &ptr);
+	}
+
+	return ptr;
+}
+
 // TODO: return RList<RBinSymbol*> .. or run a callback with that symbol constructed, so we dont have to do it twice
 static RBinElfSymbol* Elf_(_r_bin_elf_get_symbols_imports)(ELFOBJ *bin, int type) {
 	ut32 shdr_size;
 	int tsize, nsym, ret_ctr = 0, i, j, r, k, newsize;
 	ut64 toffset;
 	ut32 size = 0;
-	RBinElfSymbol  *ret = NULL;
+	RBinElfSymbol *ret = NULL, *import_ret = NULL;
+	RBinSymbol *import_sym_ptr = NULL;
+	size_t ret_size = 0, prev_ret_size = 0, import_ret_ctr = 0;
 	Elf_(Shdr) *strtab_section = NULL;
 	Elf_(Sym) *sym = NULL;
 	ut8 s[sizeof (Elf_(Sym))] = { 0 };
@@ -3027,8 +3284,8 @@ static RBinElfSymbol* Elf_(_r_bin_elf_get_symbols_imports)(ELFOBJ *bin, int type
 		return false;
 	}
 	for (i = 0; i < bin->ehdr.e_shnum; i++) {
-		if ((type == R_BIN_ELF_IMPORTS && bin->shdr[i].sh_type == (bin->ehdr.e_type == ET_REL ? SHT_SYMTAB : SHT_DYNSYM)) ||
-				(type == R_BIN_ELF_SYMBOLS && bin->shdr[i].sh_type == (Elf_(r_bin_elf_get_stripped) (bin) ? SHT_DYNSYM : SHT_SYMTAB))) {
+		if (((type & R_BIN_ELF_SYMTAB_SYMBOLS) && bin->shdr[i].sh_type == SHT_SYMTAB) ||
+				((type & R_BIN_ELF_DYNSYM_SYMBOLS) && bin->shdr[i].sh_type == SHT_DYNSYM)) {
 			if (bin->shdr[i].sh_link < 1) {
 				/* oops. fix out of range pointers */
 				continue;
@@ -3120,30 +3377,32 @@ static RBinElfSymbol* Elf_(_r_bin_elf_get_symbols_imports)(ELFOBJ *bin, int type
 				sym[j].st_shndx = READ16 (s, k);
 #endif
 			}
-			free (ret);
-			ret = calloc (nsym, sizeof (RBinElfSymbol));
+			ret = realloc (ret, (ret_size + nsym) * sizeof (RBinElfSymbol));
 			if (!ret) {
 				bprintf ("Cannot allocate %d symbols\n", nsym);
 				goto beach;
 			}
-			for (k = 1, ret_ctr = 0; k < nsym; k++) {
+			memset (ret + ret_size, 0, nsym * sizeof (RBinElfSymbol));
+			prev_ret_size = ret_size;
+			ret_size += nsym;
+			for (k = 1; k < nsym; k++) {
 				bool is_sht_null = false;
 				bool is_vaddr = false;
-				if (type == R_BIN_ELF_IMPORTS && sym[k].st_shndx == STN_UNDEF) {
+				bool is_imported = false;
+				if (type == R_BIN_ELF_IMPORT_SYMBOLS)  {
 					if (sym[k].st_value) {
 						toffset = sym[k].st_value;
 					} else if ((toffset = get_import_addr (bin, k)) == -1){
 						toffset = 0;
 					}
 					tsize = 16;
-				} else if (type == R_BIN_ELF_SYMBOLS) {
+					is_imported = sym[k].st_shndx == STN_UNDEF;
+				} else {
 					tsize = sym[k].st_size;
 					toffset = (ut64)sym[k].st_value;
 					is_sht_null = sym[k].st_shndx == SHT_NULL;
-				} else {
-					continue;
 				}
-				if (bin->ehdr.e_type == ET_REL) {
+				if (is_bin_etrel (bin)) {
 					if (sym[k].st_shndx < bin->ehdr.e_shnum) {
 						ret[ret_ctr].offset = sym[k].st_value + bin->shdr[sym[k].st_shndx].sh_offset;
 					}
@@ -3163,28 +3422,53 @@ static RBinElfSymbol* Elf_(_r_bin_elf_get_symbols_imports)(ELFOBJ *bin, int type
 					int rest = ELF_STRING_LENGTH - 1;
 					int st_name = sym[k].st_name;
 					int maxsize = R_MIN (bin->b->length, strtab_section->sh_size);
-					if (st_name < 0 || st_name >= maxsize) {
+					if (is_section_local_sym (bin, &sym[k])) {
+						const char *shname = &bin->shstrtab[bin->shdr[sym[k].st_shndx].sh_name];
+						r_str_ncpy (ret[ret_ctr].name, shname, ELF_STRING_LENGTH);
+					} else if (st_name <= 0 || st_name >= maxsize) {
 						ret[ret_ctr].name[0] = 0;
 					} else {
+						bool found = false;
+						j = -1;
+						while (!ret[++j].last && j < prev_ret_size) {
+							if (ret[j].offset == ret[ret_ctr].offset &&
+									strcmp (ret[j].name, "") != 0 && strcmp (ret[j].name, &strtab[st_name]) == 0
+									&& strcmp (ret[j].type, type2str (NULL, NULL, &sym[k])) == 0) {
+								found = true;
+								break;
+							}
+						}
+						if (found) {
+							memset (ret + ret_ctr, 0, sizeof (RBinElfSymbol));
+							continue;
+						}
 						const size_t len = __strnlen (strtab + sym[k].st_name, rest);
 						memcpy (ret[ret_ctr].name, &strtab[sym[k].st_name], len);
 					}
 				}
 				ret[ret_ctr].ordinal = k;
 				ret[ret_ctr].name[ELF_STRING_LENGTH - 2] = '\0';
-				fill_symbol_bind_and_type (&ret[ret_ctr], &sym[k]);
+				fill_symbol_bind_and_type (bin, &ret[ret_ctr], &sym[k]);
 				ret[ret_ctr].is_sht_null = is_sht_null;
 				ret[ret_ctr].is_vaddr = is_vaddr;
 				ret[ret_ctr].last = 0;
+				ret[ret_ctr].is_imported = is_imported;
 				ret_ctr++;
+				if (type == R_BIN_ELF_IMPORT_SYMBOLS && is_imported) {
+					import_ret_ctr++;
+				}
 			}
-			ret[ret_ctr].last = 1; // ugly dirty hack :D
 			R_FREE (strtab);
 			R_FREE (sym);
+			if (type == R_BIN_ELF_IMPORT_SYMBOLS) {
+				break;
+			}
 		}
 	}
 	if (!ret) {
 		return Elf_(get_phdr_symbols) (bin, type);
+	} else {
+		ret[ret_ctr].last = 1; // ugly dirty hack :D
 	}
 	int max = -1;
 	RBinElfSymbol *aux = NULL;
@@ -3200,14 +3484,33 @@ static RBinElfSymbol* Elf_(_r_bin_elf_get_symbols_imports)(ELFOBJ *bin, int type
 		aux++;
 	}
 	nsym = max;
-	if (type == R_BIN_ELF_IMPORTS) {
+	if (type == R_BIN_ELF_IMPORT_SYMBOLS) {
 		R_FREE (bin->imports_by_ord);
 		bin->imports_by_ord_size = nsym + 1;
 		bin->imports_by_ord = (RBinImport**)calloc (R_MAX (1, nsym + 1), sizeof (RBinImport*));
-	} else if (type == R_BIN_ELF_SYMBOLS) {
 		R_FREE (bin->symbols_by_ord);
 		bin->symbols_by_ord_size = nsym + 1;
 		bin->symbols_by_ord = (RBinSymbol**)calloc (R_MAX (1, nsym + 1), sizeof (RBinSymbol*));
+		import_ret = calloc (import_ret_ctr + 1, sizeof (RBinElfSymbol));
+		if (!import_ret) {
+			bprintf ("Cannot allocate %d symbols\n", nsym);
+			goto beach;
+		}
+		import_ret_ctr = 0;
+		i = -1;
+		while (!ret[++i].last) {
+			if (!(import_sym_ptr = Elf_(_r_bin_elf_convert_symbol) (bin, &ret[i], "%s"))) {
+				continue;
+			}
+			setsymord (bin, import_sym_ptr->ordinal, import_sym_ptr);
+			if (ret[i].is_imported) {
+				memcpy (&import_ret[import_ret_ctr], &ret[i], sizeof (RBinElfSymbol));
+				++import_ret_ctr;
+			}
+		}
+		import_ret[import_ret_ctr].last = 1;
+		R_FREE (ret);
+		return import_ret;
 	}
 	return ret;
 beach:
@@ -3219,15 +3522,14 @@ beach:
 
 RBinElfSymbol *Elf_(r_bin_elf_get_symbols)(ELFOBJ *bin) {
 	if (!bin->g_symbols) {
-		bin->g_symbols = Elf_(_r_bin_elf_get_symbols_imports) (bin, R_BIN_ELF_SYMBOLS);
+		bin->g_symbols = Elf_(_r_bin_elf_get_symbols_imports) (bin, R_BIN_ELF_ALL_SYMBOLS);
 	}
 	return bin->g_symbols;
 }
 
-
 RBinElfSymbol *Elf_(r_bin_elf_get_imports)(ELFOBJ *bin) {
 	if (!bin->g_imports) {
-		bin->g_imports = Elf_(_r_bin_elf_get_symbols_imports) (bin, R_BIN_ELF_IMPORTS);
+		bin->g_imports = Elf_(_r_bin_elf_get_symbols_imports) (bin, R_BIN_ELF_IMPORT_SYMBOLS);
 	}
 	return bin->g_imports;
 }
@@ -3290,6 +3592,8 @@ void* Elf_(r_bin_elf_free)(ELFOBJ* bin) {
 	R_FREE (bin->g_sections);
 	R_FREE (bin->g_symbols);
 	R_FREE (bin->g_imports);
+	ht_up_free (bin->rel_cache);
+	bin->rel_cache = NULL;
 	free (bin);
 	return NULL;
 }
@@ -3350,7 +3654,7 @@ ut64 Elf_(r_bin_elf_p2v) (ELFOBJ *bin, ut64 paddr) {
 
 	r_return_val_if_fail (bin, 0);
 	if (!bin->phdr) {
-		if (bin->ehdr.e_type == ET_REL) {
+		if (is_bin_etrel (bin)) {
 			return bin->baddr + paddr;
 		}
 		return paddr;
@@ -3374,7 +3678,7 @@ ut64 Elf_(r_bin_elf_v2p) (ELFOBJ *bin, ut64 vaddr) {
 
 	r_return_val_if_fail (bin, 0);
 	if (!bin->phdr) {
-		if (bin->ehdr.e_type == ET_REL) {
+		if (is_bin_etrel (bin)) {
 			return vaddr - bin->baddr;
 		}
 		return vaddr;
@@ -3398,7 +3702,7 @@ ut64 Elf_(r_bin_elf_p2v_new) (ELFOBJ *bin, ut64 paddr) {
 
 	r_return_val_if_fail (bin, UT64_MAX);
 	if (!bin->phdr) {
-		if (bin->ehdr.e_type == ET_REL) {
+		if (is_bin_etrel (bin)) {
 			return bin->baddr + paddr;
 		}
 		return UT64_MAX;
@@ -3420,7 +3724,7 @@ ut64 Elf_(r_bin_elf_v2p_new) (ELFOBJ *bin, ut64 vaddr) {
 
 	r_return_val_if_fail (bin, UT64_MAX);
 	if (!bin->phdr) {
-		if (bin->ehdr.e_type == ET_REL) {
+		if (is_bin_etrel (bin)) {
 			return vaddr - bin->baddr;
 		}
 		return UT64_MAX;

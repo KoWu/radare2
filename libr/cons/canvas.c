@@ -408,8 +408,12 @@ R_API char *r_cons_canvas_to_string(RConsCanvas *c) {
 	for (y = 0; y < c->h; y++) {
 		olen += c->blen[y] + 1;
 	}
-	o = calloc (1, olen * CONS_MAX_ATTR_SZ);
+	o = calloc (1, olen * 2 * CONS_MAX_ATTR_SZ);
 	if (!o) {
+		return NULL;
+	}
+	if (!olen) {
+		free (o);
 		return NULL;
 	}
 

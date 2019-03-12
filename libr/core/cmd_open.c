@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2018 - pancake */
+/* radare - LGPL - Copyright 2009-2019 - pancake */
 
 #include "r_list.h"
 #include "r_config.h"
@@ -86,6 +86,7 @@ static const char *help_msg_om[] = {
 	"Usage:", "om[-] [arg]", " # map opened files",
 	"om", "", "list all defined IO maps",
 	"omq", "", "list all maps and their fds",
+	"omqq", "", "list all maps addresses (See $MM to get the size)",
 	"om*", "", "list all maps in r2 commands format",
 	"om=", "", "list all maps in ascii art",
 	"omj", "", "list all maps in json format",
@@ -93,6 +94,7 @@ static const char *help_msg_om[] = {
 	"om-", "mapid", "remove the map with corresponding id",
 	"om-..", "", "hud view of all the maps to select the one to delete",
 	"om", " fd vaddr [size] [paddr] [rwx] [name]", "create new io map",
+	"oma"," [fd]", "create a map covering all VA for given fd",
 	"omm"," [fd]", "create default map for given fd. (omm `oq`)",
 	"om.", "", "show map, that is mapped to current offset",
 	"omn", " mapaddr [name]", "set/delete name for map which spans mapaddr",
@@ -106,9 +108,8 @@ static const char *help_msg_om[] = {
 	"omo", " fd", "map the given fd with lowest priority",
 	"omp", " mapid", "prioritize map with corresponding id",
 	"ompd", " mapid", "deprioritize map with corresponding id",
-	"ompf", "[fd]", "prioritize map by fd",
-	"ompb", " binid", "prioritize maps of mapped bin with binid",
-	"omps", " sectionid", "prioritize maps of mapped section with sectionid",
+	"ompf", " [fd]", "prioritize map by fd",
+	"ompb", " [fd]", "prioritize maps of the bin associated with the binid",
 	NULL
 };
 
@@ -193,9 +194,8 @@ static void list_maps_visual(RIO *io, ut64 seek, ut64 len, int width, int use_co
 		width = 30;
 	}
 
-	// seek = (io->va || io->debug) ? r_io_section_vaddr_to_maddr_try (io, seek) : seek;
-
-	ls_foreach_prev (io->maps, iter, s) {			//this must be prev, maps the previous map allways has lower priority
+	// this must be prev, maps the previous map allways has lower priority
+	ls_foreach_prev (io->maps, iter, s) {
 		min = R_MIN (min, s->itv.addr);
 		max = R_MAX (max, r_itv_end (s->itv) - 1);
 	}
@@ -206,10 +206,12 @@ static void list_maps_visual(RIO *io, ut64 seek, ut64 len, int width, int use_co
 		ls_foreach_prev (io->maps, iter, s) {
 			if (use_color) {
 				color_end = Color_RESET;
-				if (s->perm & R_PERM_X) { // exec bit
-					color = Color_GREEN;
+				if ((s->perm & R_PERM_X) && (s->perm & R_PERM_W)) { // exec & write bits
+					color = r_cons_singleton()->context->pal.graph_trufae;
+				} else if (s->perm & R_PERM_X) { // exec bit
+					color = r_cons_singleton()->context->pal.graph_true;
 				} else if (s->perm & R_PERM_W) { // write bit
-					color = Color_RED;
+					color = r_cons_singleton()->context->pal.graph_false;
 				} else {
 					color = "";
 					color_end = "";
@@ -439,12 +441,16 @@ static void map_list(RIO *io, int mode, RPrint *print, int fd) {
 	}
 	bool first = true;
 	ls_foreach_prev (io->maps, iter, map) {			//this must be prev
-		if (fd != -1 && map->fd != fd) {
+		if (fd >= 0 && map->fd != fd) {
 			continue;
 		}
 		switch (mode) {
 		case 'q':
-			print->cb_printf ("%d %d\n", map->fd, map->id);
+			if (fd == -2) {
+				print->cb_printf ("0x%08"PFMT64x"\n", map->itv.addr);
+			} else {
+				print->cb_printf ("%d %d\n", map->fd, map->id);
+			}
 			break;
 		case 'j':
 			if (!first) {
@@ -612,14 +618,8 @@ static void cmd_open_map(RCore *core, const char *input) {
 			break;
 		case 'b': // "ompb"
 			id = (ut32)r_num_math (core->num, input + 4);
-			if (!r_io_section_priorize_bin (core->io, id)) {
-				eprintf ("Cannot prioritize bin with binid %d\n", id);
-			}
-			break;
-		case 's': // "omps"
-			id = (ut32)r_num_math (core->num, input + 4);
-			if (!r_io_section_priorize (core->io, id)) {
-				eprintf ("Cannot prioritize section with sectionid %d\n", id);
+			if (!r_bin_file_set_cur_by_id (core->bin, id)) {
+				eprintf ("Cannot prioritize bin with fd %d\n", id);
 			}
 			break;
 		case ' ': // "omp"
@@ -742,6 +742,18 @@ static void cmd_open_map(RCore *core, const char *input) {
 			s = p;
 		}
 		break;
+	case 'a': // "oma"
+		{
+			ut32 fd = input[2]? r_num_math (core->num, input + 2): r_io_fd_get_current (core->io);
+			RIODesc *desc = r_io_desc_get (core->io, fd);
+			if (desc) {
+				map = r_io_map_add (core->io, fd, desc->perm, 0, 0, UT64_MAX);
+				r_io_map_set_name (map, desc->name);
+			} else {
+				eprintf ("Usage: omm [fd]\n");
+			}
+		}
+		break;
 	case 'm': // "omm"
 		{
 			ut32 fd = input[2]? r_num_math (core->num, input + 2): r_io_fd_get_current (core->io);
@@ -787,7 +799,11 @@ static void cmd_open_map(RCore *core, const char *input) {
 				core->print->cb_printf ("%i\n", map->id);
 			}
 		} else {
-			map_list (core->io, input[1], core->print, -1);
+			if (input[2] == 'q') { // "omqq"
+				map_list (core->io, input[1], core->print, -2);
+			} else {
+				map_list (core->io, input[1], core->print, -1);
+			}
 		}
 		break;
 	case '=': // "om="

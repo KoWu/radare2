@@ -1,4 +1,4 @@
-files = [
+r_bin_sources = [
   'bin.c',
   'bin_write.c',
   'dbginfo.c',
@@ -47,6 +47,7 @@ files = [
   'p/bin_pe64.c',
   'p/bin_pebble.c',
   'p/bin_psxexe.c',
+  'p/bin_qnx.c',
   'p/bin_sfc.c',
   'p/bin_smd.c',
   'p/bin_sms.c',
@@ -61,6 +62,7 @@ files = [
   'p/bin_write_pe.c',
   'p/bin_write_pe64.c',
   'p/bin_xbe.c',
+  'p/bin_xnu_kernelcache.c',
   'p/bin_xtr_dyldcache.c',
   'p/bin_xtr_fatmach0.c',
   'p/bin_z64.c',
@@ -77,6 +79,8 @@ files = [
   'format/mach0/fatmach0.c',
   'format/mach0/mach0.c',
   'format/mach0/mach064.c',
+  'format/xnu/r_cf_dict.c',
+  'format/xnu/yxml.c',
   'format/mdmp/mdmp.c',
   'format/mdmp/mdmp_pe.c',
   'format/mdmp/mdmp_pe64.c',
@@ -118,7 +122,7 @@ files = [
 
 r_bin_inc = [platform_inc, include_directories('mangling', 'format')]
 
-r_bin = library('r_bin', files,
+r_bin = library('r_bin', r_bin_sources,
   include_directories: r_bin_inc,
   c_args: ['-DR_API_BIN_ONLY=1'] + library_cflags,
   dependencies: [
@@ -127,6 +131,7 @@ r_bin = library('r_bin', files,
     r_hash_dep,
     r_magic_dep,
     r_socket_dep,
+    r_syscall_dep,
     sdb_dep,
     java_dep,
     lz4_dep
@@ -139,8 +144,7 @@ r_bin = library('r_bin', files,
 r_bin_dep = declare_dependency(link_with: r_bin,
                                include_directories: r_bin_inc)
 
-pkgconfig_mod.generate(
-  libraries: [r_bin],
+pkgconfig_mod.generate(r_bin,
   subdirs: 'libr',
   version: r2_version,
   name: 'r_bin',
@@ -148,7 +152,8 @@ pkgconfig_mod.generate(
   requires: pkgconfig_magic_requires + [
     'r_util',
     'r_io',
-    'r_socket'
+    'r_socket',
+    'r_syscall'
   ],
   description: 'radare foundation libraries'
 )

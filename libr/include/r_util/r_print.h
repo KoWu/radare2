@@ -11,24 +11,30 @@
 extern "C" {
 #endif
 
-#define R_PRINT_FLAGS_COLOR   0x00000001
-#define R_PRINT_FLAGS_ADDRMOD 0x00000002
-#define R_PRINT_FLAGS_CURSOR  0x00000004
-#define R_PRINT_FLAGS_HEADER  0x00000008
-#define R_PRINT_FLAGS_SPARSE  0x00000010
-#define R_PRINT_FLAGS_SEGOFF  0x00000020
-#define R_PRINT_FLAGS_OFFSET  0x00000040
-#define R_PRINT_FLAGS_REFS    0x00000080
-#define R_PRINT_FLAGS_DIFFOUT 0x00000100 /* only show different rows in `cc` hexdiffing */
-#define R_PRINT_FLAGS_ADDRDEC 0x00000200
-#define R_PRINT_FLAGS_COMMENT 0x00000400
-#define R_PRINT_FLAGS_COMPACT 0x00000800
-#define R_PRINT_FLAGS_NONHEX  0x00001000
-#define R_PRINT_FLAGS_SECSUB  0x00002000
-#define R_PRINT_FLAGS_RAINBOW 0x00004000
+#define R_PRINT_FLAGS_COLOR    0x00000001
+#define R_PRINT_FLAGS_ADDRMOD  0x00000002
+#define R_PRINT_FLAGS_CURSOR   0x00000004
+#define R_PRINT_FLAGS_HEADER   0x00000008
+#define R_PRINT_FLAGS_SPARSE   0x00000010
+#define R_PRINT_FLAGS_SEGOFF   0x00000020
+#define R_PRINT_FLAGS_OFFSET   0x00000040
+#define R_PRINT_FLAGS_REFS     0x00000080
+#define R_PRINT_FLAGS_DIFFOUT  0x00000100 /* only show different rows in `cc` hexdiffing */
+#define R_PRINT_FLAGS_ADDRDEC  0x00000200
+#define R_PRINT_FLAGS_COMMENT  0x00000400
+#define R_PRINT_FLAGS_COMPACT  0x00000800
+#define R_PRINT_FLAGS_NONHEX   0x00001000
+#define R_PRINT_FLAGS_SECSUB   0x00002000
+#define R_PRINT_FLAGS_RAINBOW  0x00004000
+#define R_PRINT_FLAGS_HDROFF   0x00008000
+#define R_PRINT_FLAGS_STYLE    0x00010000
+#define R_PRINT_FLAGS_NONASCII 0x00020000
+#define R_PRINT_FLAGS_ALIGN    0x00040000
+#define R_PRINT_FLAGS_UNALLOC  0x00080000
 
 typedef int (*RPrintZoomCallback)(void *user, int mode, ut64 addr, ut8 *bufz, ut64 size);
 typedef const char *(*RPrintNameCallback)(void *user, ut64 addr);
+typedef int (*RPrintSizeCallback)(void *user, ut64 addr);
 typedef char *(*RPrintCommentCallback)(void *user, ut64 addr);
 typedef const char *(*RPrintColorFor)(void *user, ut64 addr, bool verbose);
 typedef char *(*RPrintHasRefs)(void *user, ut64 addr, bool verbose);
@@ -78,6 +84,7 @@ typedef struct r_print_t {
 	bool resetbg;
 	RPrintZoom *zoom;
 	RPrintNameCallback offname;
+	RPrintSizeCallback offsize;
 	RPrintColorFor colorfor;
 	RPrintHasRefs hasrefs;
 	RPrintCommentCallback get_comments;
@@ -94,8 +101,10 @@ typedef struct r_print_t {
 	int lines_cache_sz;
 	int lines_abs;
 	bool esc_bslash;
+	bool wide_offsets;
 	const char *strconv_mode;
 	RList *vars;
+	char io_unalloc_ch;
 
 	// when true it uses row_offsets
 	bool calc_row_offsets;
@@ -138,10 +147,11 @@ R_API void r_print_hexdiff(RPrint *p, ut64 aa, const ut8* a, ut64 ba, const ut8 
 R_API void r_print_bytes(RPrint *p, const ut8* buf, int len, const char *fmt);
 R_API void r_print_fill(RPrint *p, const ut8 *arr, int size, ut64 addr, int step);
 R_API void r_print_byte(RPrint *p, const char *fmt, int idx, ut8 ch);
+R_API const char *r_print_byte_color(RPrint *p, int ch);
 R_API void r_print_c(RPrint *p, const ut8 *str, int len);
 R_API void r_print_raw(RPrint *p, ut64 addr, const ut8* buf, int len, int offlines);
-R_API bool r_print_have_cursor(RPrint *p, int cur);
-R_API void r_print_cursor(RPrint *p, int cur, int set);
+R_API bool r_print_have_cursor(RPrint *p, int cur, int len);
+R_API void r_print_cursor(RPrint *p, int cur, int len, int set);
 R_API void r_print_cursor_range(RPrint *p, int cur, int to, int set);
 R_API int r_print_get_cursor(RPrint *p);
 R_API void r_print_set_cursor(RPrint *p, int curset, int ocursor, int cursor);
@@ -158,6 +168,7 @@ R_API void r_print_code(RPrint *p, ut64 addr, ut8 *buf, int len, char lang);
 #define R_PRINT_UNIONMODE (1 << 5)
 #define R_PRINT_VALUE     (1 << 6)
 #define R_PRINT_DOT       (1 << 7)
+#define R_PRINT_QUIET     (1 << 8)
 R_API int r_print_format_struct_size(const char *format, RPrint *p, int mode, int n);
 R_API int r_print_format(RPrint *p, ut64 seek, const ut8* buf, const int len, const char *fmt, int elem, const char *setval, char *field);
 R_API int r_print_format_length(const char *fmt);

@@ -224,11 +224,13 @@ extern "C" {
 #define R_SYS_DIR "\\"
 #define R_SYS_ENVSEP ";"
 #define R_SYS_HOME "USERPROFILE"
+#define R_SYS_TMP "TEMP"
 #else
 #define FS "/"
 #define R_SYS_DIR "/"
 #define R_SYS_ENVSEP ":"
 #define R_SYS_HOME "HOME"
+#define R_SYS_TMP "TMPDIR"
 #endif
 
 #define R_JOIN_2_PATHS(p1, p2) p1 R_SYS_DIR p2
@@ -241,13 +243,6 @@ extern "C" {
 #endif
 
 typedef int (*PrintfCallback)(const char *str, ...);
-
-// TODO NOT USED. DEPREACATE
-#if R_RTDEBUG
-#define IFRTDBG if (getenv ("LIBR_DEBUG"))
-#else
-#define IFRTDBG if (0)
-#endif
 
 /* compile-time introspection helpers */
 #define CTO(y,z) ((size_t) &((y*)0)->z)
@@ -637,5 +632,13 @@ static inline void r_run_call10(void *fcn, void *arg1, void *arg2, void *arg3, v
 	((void (*)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *))(fcn))
 		(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
 }
+
+#ifndef container_of
+# ifdef _MSC_VER
+#  define container_of(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
+# else
+#  define container_of(ptr, type, member) ((type *)((char *)(__typeof__(((type *)0)->member) *){ptr} - offsetof(type, member)))
+# endif
+#endif
 
 #endif // R2_TYPES_H

@@ -18,8 +18,15 @@ static bool check_bytes_buf(RBuffer* rbuf) {
 	return rbuf && r_buf_read_at (rbuf, R_BUF_CUR, buf, 4) == 4 && !memcmp (buf, R_BIN_WASM_MAGIC_BYTES, 4);
 }
 
-static int find_symbol(const ut8 *p, const RBinWasmSymbol* q) {
+static bool find_symbol(const ut32 *p, const RBinWasmSymbol* q) {
 	return q->id != (*p);
+}
+
+static bool find_export(const ut32 *p, const RBinWasmExportEntry* q) {
+	if (q->kind != R_BIN_WASM_EXTERNALKIND_Function) {
+		return true;
+	}
+	return q->index != (*p);
 }
 
 static void * load_buffer(RBinFile *bf, RBuffer *buf, ut64 loadaddr, Sdb *sdb) {
@@ -127,7 +134,7 @@ static RList *sections(RBinFile *bf) {
 
 static RList *symbols(RBinFile *bf) {
 	RBinWasmObj *bin = NULL;
-	RList *ret = NULL, *codes = NULL, *imports = NULL, *symtab = NULL;
+	RList *ret = NULL, *codes = NULL, *imports = NULL, *symtab = NULL, *exports = NULL;
 	RBinSymbol *ptr = NULL;
 
 	if (!bf || !bf->o || !bf->o->bin_obj) {
@@ -144,6 +151,9 @@ static RList *symbols(RBinFile *bf) {
 		goto bad_alloc;
 	}
 	if (!(symtab = r_bin_wasm_get_symtab (bin))) {
+		goto bad_alloc;
+	}
+	if (!(exports = r_bin_wasm_get_exports (bin))) {
 		goto bad_alloc;
 	}
 
@@ -171,9 +181,10 @@ static RList *symbols(RBinFile *bf) {
 		r_list_append (ret, ptr);
 	}
 
-	ut8 fcn_id = 0;
+	ut32 fcn_id = 1; // wasm function index starts from 1
 	RListIter *sym_it = NULL;
 	RBinWasmCodeEntry *func;
+	RBinWasmExportEntry *export = NULL;
 	RBinWasmSymbol *wasm_sym = NULL;
 	r_list_foreach (codes, iter, func) {
 		if (!(ptr = R_NEW0 (RBinSymbol))) {
@@ -185,12 +196,21 @@ static RList *symbols(RBinFile *bf) {
 			wasm_sym = (RBinWasmSymbol *) r_list_iter_get_data (sym_it);
 			ptr->name = strdup (wasm_sym->name);
 		} else {
-			// fallback if symbol is not found.
-			ptr->name = r_str_newf ("fcn.%d", fcn_id);
+			sym_it = r_list_find (exports, &fcn_id, (RListComparator) find_export);
+			if (sym_it) {
+				export = (RBinWasmExportEntry *) r_list_iter_get_data (sym_it);
+				ptr->name = strdup (export->field_str);
+				ptr->bind = R_BIN_BIND_GLOBAL_STR;
+			} else {
+				// fallback if symbol is not found.
+				ptr->name = r_str_newf ("fcn.%d", fcn_id);
+			}
 		}
 
 		ptr->forwarder = r_str_const ("NONE");
-		ptr->bind = r_str_const ("NONE");
+		if (!ptr->bind) {
+			ptr->bind = r_str_const ("NONE");
+		}
 		ptr->type = r_str_const (R_BIN_TYPE_FUNC_STR);
 		ptr->size = func->len;
 		ptr->vaddr = (ut64)func->code;
@@ -201,10 +221,11 @@ static RList *symbols(RBinFile *bf) {
 		r_list_append (ret, ptr);
 	}
 
-	// TODO: exports, globals, tables and memories
+	// TODO: globals, tables and memories
 	return ret;
 bad_alloc:
 	// not so sure if imports should be freed.
+	r_list_free (exports);
 	r_list_free (symtab);
 	r_list_free (codes);
 	r_list_free (ret);

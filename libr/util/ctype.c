@@ -67,6 +67,8 @@ R_API RList* r_type_get_enum (Sdb *TDB, const char *name) {
 					free (member);
 					free (var2);
 				}
+			} else {
+				free (member);
 			}
 		}
 	}
@@ -138,11 +140,13 @@ R_API int r_type_get_bitsize(Sdb *TDB, const char *type) {
 		return 0;
 	}
 	if (!strcmp (t, "type")){
-		query = sdb_fmt ("type.%s.size", tmptype);
-		return sdb_num_get (TDB, query, 0); // returns size in bits
+		query = r_str_newf ("type.%s.size", tmptype);
+		int r = (int)sdb_num_get (TDB, query, 0); // returns size in bits
+		free (query);
+		return r;
 	}
-	if (!strcmp (t, "struct")) {
-		query = sdb_fmt ("struct.%s", tmptype);
+	if (!strcmp (t, "struct") || !strcmp (t, "union")) {
+		query = r_str_newf ("%s.%s", t, tmptype);
 		char *members = sdb_get (TDB, query, 0);
 		char *next, *ptr = members;
 		int ret = 0;
@@ -152,8 +156,10 @@ R_API int r_type_get_bitsize(Sdb *TDB, const char *type) {
 				if (!name) {
 					break;
 				}
-				query = sdb_fmt ("struct.%s.%s", tmptype, name);
+				free (query);
+				query = r_str_newf ("%s.%s.%s", t, tmptype, name);
 				char *subtype = sdb_get (TDB, query, 0);
+				R_FREE (query);
 				if (!subtype) {
 					break;
 				}
@@ -168,13 +174,19 @@ R_API int r_type_get_bitsize(Sdb *TDB, const char *type) {
 					if (elements == 0) {
 						elements = 1;
 					}
-					ret += r_type_get_bitsize (TDB, subtype) * elements;
+					if (!strcmp (t, "struct")) {
+						ret += r_type_get_bitsize (TDB, subtype) * elements;
+					} else {
+						int sz = r_type_get_bitsize (TDB, subtype) * elements;
+						ret = sz > ret ? sz : ret;
+					}
 				}
 				free (subtype);
 				ptr = next;
 			} while (next);
 			free (members);
 		}
+		free (query);
 		return ret;
 	}
 	return 0;
@@ -422,6 +434,14 @@ R_API char *r_type_format(Sdb *TDB, const char *t) {
 		free (vars);
 		return fmt;
 	}
+	if (!strcmp (kind, "typedef")) {
+		snprintf (var2, sizeof (var2), "typedef.%s", t);
+		const char *type = sdb_const_get (TDB, var2, NULL);
+		// only supports struct atm
+		if (type && r_str_startswith (type, "struct ") && strcmp (type + 7, t)) {
+			return r_type_format (TDB, type + 7);
+		}
+	}
 	return NULL;
 }
 
@@ -589,35 +609,9 @@ R_API R_OWN char *r_type_func_guess(Sdb *TDB, R_NONNULL char *func_name) {
 	}
 	// some names are in format module.dll_function_number, try to remove those
 	// also try module.dll_function and function_number
-	if ((first = strchr (str, '_'))) {
-		// check if the prefix is actually "dll_" otherwise don't try to
-		// interpret the name
-		const char *dll = "dll";
-		char *dll_ptr = first - strlen (dll);
-		if (dll_ptr < str || strncmp (dll_ptr, dll, strlen (dll))) {
-			goto out;
-		}
-
-		last = (char *)r_str_lchr (first, '_');
-		if (!last) {
-			goto out;
-		}
-		// middle + suffix or right half
-		if ((result = type_func_try_guess (TDB, first + 1))) {
-			goto out;
-		}
-		last[0] = 0;
-		// prefix + middle or left
-		if ((result = type_func_try_guess (TDB, str))) {
-			goto out;
-		}
-		if (last != first) {
-			// middle
-			if ((result = type_func_try_guess (TDB, first + 1))) {
-				goto out;
-			}
-		}
-		result = NULL;
+	if ((first = strstr (str, "dll_"))) {
+		result = type_func_try_guess (TDB, first + 4);
+		goto out;
 	}
 out:
 	free (str);

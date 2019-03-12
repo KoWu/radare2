@@ -23,8 +23,8 @@ R_API RParse *r_parse_new() {
 		return NULL;
 	}
 	p->parsers->free = NULL; // memleak
-	p->notin_flagspace = -1;
-	p->flagspace = -1;
+	p->notin_flagspace = NULL;
+	p->flagspace = NULL;
 	p->pseudo = false;
 	p->relsub = false;
 	p->tailsub = false;
@@ -105,6 +105,9 @@ R_API int r_parse_parse(RParse *p, const char *data, char *str) {
 
 static bool isvalidflag(RFlagItem *flag) {
 	if (flag) {
+		if (strstr (flag->name, "main") || strstr (flag->name, "entry")) {
+			return true;
+		}
 		if (strchr (flag->name, '.')) {
 			return strncmp (flag->name, "section.", 8);
 		}
@@ -185,6 +188,43 @@ static void insert(char *dst, const char *src) {
 	free (endNum);
 }
 
+// TODO: move into r_util/r_str
+static void replaceWords(char *s, const char *k, const char *v) {
+	for (;;) {
+		char *p = strstr (s, k);
+		if (!p) {
+			break;
+		}
+		char *s = p + strlen (k);
+		char *d = p + strlen (v);
+		memmove (d, s, strlen (s) + 1);
+		memmove (p, v, strlen (v));
+		s = p + strlen (v);
+	}
+}
+
+static void replaceRegisters (RReg *reg, char *s, bool x86) {
+	int i;
+	for (i = 0; i < 64; i++) {
+		const char *k = r_reg_get_name (reg, i);
+		if (!k || i == R_REG_NAME_PC) {
+			continue;
+		}
+		const char *v = r_reg_get_role (i);
+		if (!v) {
+			break;
+		}
+		if (x86 && *k == 'r') {
+			replaceWords (s, k, v);
+			char *reg32 = strdup (k);
+			*reg32 = 'e';
+			replaceWords (s, reg32, v);
+		} else {
+			replaceWords (s, k, v);
+		}
+	}
+}
+
 static int filter(RParse *p, ut64 addr, RFlag *f, char *data, char *str, int len, bool big_endian) {
 	char *ptr = data, *ptr2, *ptr_backup;
 	RAnalFunction *fcn;
@@ -208,34 +248,24 @@ static int filter(RParse *p, ut64 addr, RFlag *f, char *data, char *str, int len
 		return 0;
 	}
 #if FILTER_DWORD
-	ptr2 = strstr (ptr, "dword ");
-	if (ptr2) {
-		char *src = ptr2 + 6;
-		memmove (ptr2, src, strlen (src) + 1);
-	}
-	ptr2 = strstr (ptr, "qword ");
-	if (ptr2) {
-		char *src = ptr2 + 6;
-		memmove (ptr2, src, strlen (src) + 1);
-	}
+	replaceWords (ptr, "dword ", src);
+	replaceWords (ptr, "qword ", src);
 #endif
+	if (p->regsub) {
+		replaceRegisters (p->anal->reg, ptr, false);
+		if (x86) {
+			replaceRegisters (p->anal->reg, ptr, true);
+		}
+	}
 	ptr2 = NULL;
 	// remove "dword" 2
 	char *nptr;
-	while ((nptr = findNextNumber (ptr))) {
-#if 0
-		char *optr = ptr;
-		if (nptr[1]== ' ') {
-			for (nptr++;*nptr && *nptr >='0' && *nptr <= '9'; nptr++) {
-			}
-			ptr = nptr;
-			continue;
-		}
-#endif
+	int count = 0;
+	for (count = 0; (nptr = findNextNumber (ptr)) ; count++) {
 		ptr = nptr;
 		if (x86) {
 			for (ptr2 = ptr; *ptr2 && !isx86separator (*ptr2); ptr2++) {
-		//		eprintf ("(%s) (%c)\n", optr, *ptr2);
+				;
 			}
 		} else {
 			for (ptr2 = ptr; *ptr2 && (*ptr2 != ']' && (*ptr2 != '\x1b') && !IS_SEPARATOR (*ptr2)); ptr2++) {
@@ -258,27 +288,21 @@ static int filter(RParse *p, ut64 addr, RFlag *f, char *data, char *str, int len
 			}
 			if (f) {
 				RFlagItem *flag2;
-				flag = r_flag_get_i2 (f, off);
+				flag = p->flag_get (f, off);
 				computed = false;
-				if (!flag) {
-					flag = r_flag_get_i (f, off);
-				}
 				if ((!flag || arm) && p->relsub_addr) {
 					computed = true;
-					flag2 = r_flag_get_i2 (f, p->relsub_addr);
-					if (!flag2) {
-						flag2 = r_flag_get_i (f, p->relsub_addr);
-					}
+					flag2 = p->flag_get (f, p->relsub_addr);
 					if (!flag || arm) {
 						flag = flag2;
 					}
 				}
 				if (isvalidflag (flag)) {
-					if (p->notin_flagspace != -1) {
+					if (p->notin_flagspace) {
 						if (p->flagspace == flag->space) {
 							continue;
 						}
-					} else if (p->flagspace != -1 && (p->flagspace != flag->space)) {
+					} else if (p->flagspace && (p->flagspace != flag->space)) {
 						ptr = ptr2;
 						continue;
 					}
@@ -370,7 +394,7 @@ static int filter(RParse *p, ut64 addr, RFlag *f, char *data, char *str, int len
 					}
 					return true;
 				}
-				if (p->tailsub) { //  && off > UT32_MAX && addr > UT32_MAX) {
+				if (p->tailsub) { //  && off > UT32_MAX && addr > UT32_MAX)
 					if (off != UT64_MAX) {
 						if (off == addr) {
 							insert (ptr, "$$");
@@ -387,6 +411,11 @@ static int filter(RParse *p, ut64 addr, RFlag *f, char *data, char *str, int len
 			}
 		}
 		if (p->hint) {
+			const int nw = p->hint->nword;
+			if (count != nw) {
+				ptr = ptr2;
+				continue;
+			}
 			int pnumleft, immbase = p->hint->immbase;
 			char num[256] = {0}, *pnum, *tmp;
 			bool is_hex = false;
@@ -532,7 +561,7 @@ static int filter(RParse *p, ut64 addr, RFlag *f, char *data, char *str, int len
 	return false;
 }
 
-R_API char *r_parse_immtrim (char *opstr) {
+R_API char *r_parse_immtrim(char *opstr) {
 	if (!opstr || !*opstr) {
 		return NULL;
 	}
@@ -580,10 +609,6 @@ R_API bool r_parse_varsub(RParse *p, RAnalFunction *f, ut64 addr, int oplen, cha
 /* setters */
 R_API void r_parse_set_user_ptr(RParse *p, void *user) {
 	p->user = user;
-}
-
-R_API void r_parse_set_flagspace(RParse *p, int fs) {
-	p->flagspace = fs;
 }
 
 /* TODO: DEPRECATE */

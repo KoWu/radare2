@@ -99,7 +99,7 @@ static bool strmatch(char *entry, char *filter, char *mask, const int mask_size)
 
 static RList *hud_filter(RList *list, char *user_input, int top_entry_n, int *current_entry_n, char **selected_entry) {
 	RListIter *iter;
-	void *current_entry;
+	char *current_entry;
 	char mask[HUD_BUF_SIZE];
 	char *p, *x;
 	int j, rows;
@@ -125,10 +125,10 @@ static RList *hud_filter(RList *list, char *user_input, int top_entry_n, int *cu
 			p = strdup (current_entry);
 			// if the filter is empty, print the entry and move on
 			if (!user_input[0]) {
-				r_list_append (res, r_str_newf (" %c %s", first_line? '-': ' ', current_entry));
+				r_list_append (res, r_str_newf (" %c %s", first_line? '-': ' ', p));
 			} else {
 				// otherwise we need to emphasize the matching part
-				if (I (color)) {
+				if (I (context->color)) {
 					int last_color_change = 0;
 					int last_mask = 0;
 					char *str = r_str_newf (" %c ", first_line? '-': ' ');
@@ -325,6 +325,7 @@ R_API char *r_cons_hud_path(const char *path, int dir) {
 		if (ret) {
 			tmp = r_str_append (tmp, "/");
 			tmp = r_str_append (tmp, ret);
+			free (ret);
 			ret = r_file_abspath (tmp);
 			free (tmp);
 			tmp = ret;

@@ -217,7 +217,7 @@ R_API ut64 r_num_get(RNum *num, const char *str) {
 		ret = str[1] & 0xff;
 	// ugly as hell
 	} else if (!strncmp (str, "0xff..", 6) || !strncmp (str, "0xFF..", 6)) {
-		ret = r_num_tailff (num, str + 5);
+		ret = r_num_tailff (num, str + 6);
 	// ugly as hell
 	} else if (!strncmp (str, "0xf..", 5) || !strncmp (str, "0xF..", 5)) {
 		ret = r_num_tailff (num, str + 5);
@@ -402,7 +402,7 @@ R_API ut64 r_num_math(RNum *num, const char *str) {
 #if R_NUM_USE_CALC
 	ut64 ret;
 	const char *err = NULL;
-	if (!str) {
+	if (!str || !*str) {
 		return 0LL;
 	}
 	//if (!str || !*str) return 0LL;
@@ -412,8 +412,6 @@ R_API ut64 r_num_math(RNum *num, const char *str) {
 	ret = r_num_calc (num, str, &err);
 	if (err) {
 		eprintf ("r_num_calc error: (%s) in (%s)\n", err, str);
-	} else if (num) {
-		num->value = ret;
 	}
 	if (num) {
 		num->value = ret;
@@ -755,7 +753,7 @@ static ut64 r_num_tailff(RNum *num, const char *hex) {
 		strcpy (p, "0x");
 		strcpy (p + 2, hex);
 		if (isxdigit ((ut8)hex[0])) {
-			n = r_num_math (num, p);
+			n = r_num_get (num, p);
 		} else {
 			eprintf ("Invalid argument\n");
 			free (p);
@@ -773,6 +771,11 @@ R_API int r_num_between(RNum *num, const char *input_value) {
 	char * const str = strdup (input_value);
 	RList *nums = r_num_str_split_list (str);
 	int len = r_list_length (nums);
+	if (len < 3) {
+		free (str);
+		r_list_free (nums);
+		return -1;
+	}
 	if (len > 3) {
 		len = 3;
 	}

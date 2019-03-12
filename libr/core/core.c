@@ -1,4 +1,4 @@
-/* radare2 - LGPL - Copyright 2009-2018 - pancake */
+/* radare2 - LGPL - Copyright 2009-2019 - pancake */
 
 #include <r_core.h>
 #include <r_socket.h>
@@ -7,6 +7,7 @@
 #if __UNIX__
 #include <signal.h>
 #endif
+#include "i/private.h"
 
 #define DB core->sdb
 
@@ -174,7 +175,7 @@ R_API char* r_core_add_asmqjmp(RCore *core, ut64 addr) {
 		}
 	}
 	if (core->asmqjmps_count < core->asmqjmps_size - 1) {
-		int i;
+		int i = 0;
 		char t[R_CORE_ASMQJMPS_LEN_LETTERS + 1] = {0};
 		for (i = 0; i < core->asmqjmps_count + 1; i++) {
 			if (core->asmqjmps[i] == addr) {
@@ -185,6 +186,10 @@ R_API char* r_core_add_asmqjmp(RCore *core, ut64 addr) {
 		if (!found) {
 			i = ++core->asmqjmps_count;
 			core->asmqjmps[i] = addr;
+		}
+		// This check makes pos never be <1, thefor not fill 't' with trash
+		if (i < 1) {
+			return NULL;
 		}
 		r_core_set_asmqjmps (core, t, sizeof (t), i);
 		return strdup (t);
@@ -203,15 +208,14 @@ R_API void r_core_set_asmqjmps(RCore *core, char *str, size_t len, int pos) {
 			pos --;
 		////  }
 		for (i = 0; i < R_CORE_ASMQJMPS_LEN_LETTERS - 1; i++) {
-			ut64 div = pos / letter_divs[i];
+			int div = pos / letter_divs[i];
 			pos %= letter_divs[i];
 			if (div > 0 && j < len) {
-				str[j] = 'A' + div - 1;
-				j++;
+				str[j++] = 'A' + div - 1;
 			}
 		}
 		if (j < len) {
-			ut64 div = pos % R_CORE_ASMQJMPS_LETTERS;
+			int div = pos % R_CORE_ASMQJMPS_LETTERS;
 			str[j++] = 'a' + div;
 		}
 		str[j] = '\0';
@@ -591,9 +595,11 @@ static ut64 num_callback(RNum *userptr, const char *str, int *ok) {
 				if (r_debug_reg_sync (core->dbg, R_REG_TYPE_GPR, false)) {
 					RRegItem *r = r_reg_get (core->dbg->reg, bptr, -1);
 					if (r) {
+						free (bptr);
 						return r_reg_get_value (core->dbg->reg, r);
 					}
 				}
+				free (bptr);
 				return 0; // UT64_MAX;
 			} else {
 				int rows;
@@ -683,8 +689,11 @@ static ut64 num_callback(RNum *userptr, const char *str, int *ok) {
 		case 'w': // $w word size
 			return r_config_get_i (core->config, "asm.bits") / 8;
 		case 'S': // $S section offset
-			if ((s = r_bin_get_section_at (r_bin_cur_object (core->bin), core->offset, true))) {
-				return (str[2] == 'S'? s->size: s->vaddr);
+			{
+				RBinObject *bo = r_bin_cur_object (core->bin);
+				if (bo && (s = r_bin_get_section_at (bo, core->offset, true))) {
+					return (str[2] == 'S'? s->size: s->vaddr);
+				}
 			}
 			return 0LL;
 		case 'D': // $D
@@ -805,50 +814,194 @@ R_API RCore *r_core_new() {
 /*-----------------------------------*/
 #define radare_argc (sizeof (radare_argv)/sizeof(const char*))
 static const char *radare_argv[] = {
-	"?", "?v", "whereis", "which", "ls", "rm", "mkdir", "pwd", "cat", "less",
-	"dH", "ds", "dso", "dsl", "dc", "dd", "dm",
-	"db ", "db-", "dbd", "dbe", "dbs", "dbte", "dbtd", "dbts",
-	"dp", "dr", "dcu", "dmd", "dmp", "dml",
-	"ec","ecs", "eco",
-	"s", "s+", "s++", "s-", "s--", "s*", "sa", "sb", "sr",
-	"!", "!!", "!!!", "!!!-",
-	"#sha1", "#crc32", "#pcprint", "#sha256", "#sha512", "#md4", "#md5",
-	"#!python", "#!perl", "#!vala",
-	"V", "v",
-	"aa", "ab", "af", "ar", "ag", "at", "a?", "ax", "ad",
-	"ae", "aec", "aex", "aep", "aepc", "aea", "aeA", "aes", "aeso", "aesu", "aesue", "aer", "aei", "aeim", "aef",
-	"aaa", "aac","aae", "aai", "aar", "aan", "aas", "aat", "aap", "aav",
-	"af", "afa", "afan", "afc", "afC", "afi", "afb", "afbb", "afn", "afr", "afs", "af*", "afv", "afvn",
-	"aga", "agc", "agd", "agl", "agfl",
-	"e", "et", "e-", "e*", "e!", "e?", "env ",
-	"i", "ie", "ii", "iI", "ir", "iR", "is", "iS", "il", "iz", "id", "idp", "idpi", "idpi*", "idpd",
-	"q", "q!", "q!!", "q!!!",
-	"f", "fl", "fr", "f-", "f*", "fs", "fS", "fr", "fo", "f?",
-	"m", "m*", "ml", "m-", "my", "mg", "md", "mp", "m?",
-	"o", "o+", "oc", "on", "op", "o-", "x", "wf", "wF", "wt", "wta", "wtf", "wp", "obf",
-	"L", "La", "Li", "Lo", "Lc", "Lh", "Ld", "L-",
-	"t", "to", "t-", "tf", "td", "td-", "tb", "tn", "te", "tl", "tk", "ts", "tu",
-	"(", "(*", "(-", "()", ".", ".!", ".(", "./",
-	"r", "r+", "r-",
-	"b", "bf", "b?",
-	"/", "//", "/a", "/c", "/h", "/m", "/x", "/v", "/v2", "/v4", "/v8", "/r", "/re",
-	"y", "yy", "y?",
-	"wa", "waf", "wao", 
-	"wv", "wv1", "wv2",  "wv4", "wv8",
-	"wx", "wxf", "ww", "w?",
-	"p6d", "p6e", "p8", "pb", "pc",
-	"pd", "pda", "pdb", "pdc", "pdj", "pdr", "pdf", "pdi", "pdl", "pds", "pdt",
-	"pD", "px", "pX", "po", "pf", "pf.", "pf*", "pf*.", "pfd", "pfd.", "pv", "p=", "p-",
-	"pfj", "pfj.", "pfv", "pfv.",
-	"pm", "pr", "pt", "ptd", "ptn", "pt?", "ps", "pz", "pu", "pU", "p?",
-	"z", "z*", "zj", "z-", "z-*",
-	"za", "zaf", "zaF",
-	"zo", "zoz", "zos",
-	"zfd", "zfs", "zfz",
-	"z/", "z/*",
+	"whereis", "which", "ls", "rm", "mkdir", "pwd", "cat", "less",
+	"#?", "#!", "#sha1", "#crc32", "#pcprint", "#sha256", "#sha512", "#md4", "#md5",
+	"#!python", "#!perl", "#!vala", "#!pipe",
+	"*?", "*",
+	"(", "(*", "(-", "()", ".?", ".", "..", "...", ".:", ".--", ".-", ".!", ".(", "./", ".*",
+	"_?", "_",
+	"=?", "=", "=<", "=!", "=+", "=-", "==", "=!=", "!=!", "=:", "=&:",
+	"=g?", "=g", "=g!", "=h?", "=h", "=h-", "=h--", "=h*", "=h&", "=H?", "=H", "=H&",
+	"<",
+	"/?", "/", "/j", "/j!", "/j!x", "/+", "//", "/a", "/a1", "/ab", "/aB", "/c", "/ce", "/cej", "/ci", "/cij",
+	"/C", "/Ca", "/Car", "/d", "/e", "/E", "/f", "/F", "/g", "/gg", "/h", "/ht", "/i", "/m", "/M",
+	"/o", "/O", "/p", "/P", "/s", "/s*", "/r?", "/r", "/ra", "/rc", "/re", "/rr", "/rw", "/rc",
+	"/R",
+	"/v?", "/v", "/v1", "/v2", "/v4", "/v8",
+	"/V?", "/V", "/V1", "/V2", "/V4", "/V8",
+	"/w", "/wi", "/x", "/z",
+	"!?", "!", "!!", "!!!", "!!!-", "!-", "!-*", "!=!",
+	"a?", "a", "aa", "aa*",
+	"aaa", "aab", "aac", "aac*", "aad", "aae", "aaf", "aaF", "aaFa", "aai", "aaij", "aan", "aang", "aao", "aap",
+	"aar?", "aar", "aar*", "aarj", "aas", "aat", "aaT", "aau", "aav",
+	"a8", "ab", "abb",
+	"acl", "acll", "aclj", "acl*", "ac?", "ac", "ac-", "acn", "acv", "acv-", "acb", "acb-", "acm", "acm-", "acmn",
+	"aC?", "aC", "aCe", "ad", "ad4", "ad8", "adf", "adfg", "adt", "adk",
+	"ae?", "ae??", "ae", "aea", "aeA", "aeaf", "aeAf", "aeC", "aec?", "aec", "aecs", "aecc", "aecu", "aecue",
+	"aef", "aefa",
+	"aei", "aeim", "aeip", "aek", "aek-", "aeli", "aelir", "aep?", "aep", "aep-", "aepc",
+	"aer", "aets?", "aets", "aets+", "aes", "aesp", "aesb", "aeso", "aesou", "aess", "aesu", "aesue", "aetr", "aex",
+	"af?", "af", "afr", "af+", "af-",
+	"afa", "afan",
+	"afb?", "afb", "afb.", "afb+", "afbb", "afbr", "afbi", "afbj", "afbe", "afB", "afbc",
+	"afB", "afC", "afCl", "afCc", "afc?", "afc", "afc=", "afcr", "afcrj", "afca", "afcf", "afcfj",
+	"afck", "afcl", "afco", "afcR",
+	"afd", "aff", "afF", "afi",
+	"afl?", "afl", "afl+", "aflc", "aflj", "afll", "afllj", "aflm", "aflq", "aflqj", "afls",
+	"afm", "afM", "afn?", "afn", "afna", "afns", "afnsj",
+	"afo", "afs", "afS", "aft?", "aft", "afu",
+	"afv?", "afv", "afvr?", "afvr", "afvr*", "afvrj", "afvr-", "afvrg", "afvrs",
+	"afvb?", "afvb", "afvbj", "afvb-", "afvbg", "afvbs",
+	"afvs?", "afvs", "afvs*", "afvsj", "afvs-", "afvsg", "afvss",
+	"afv*", "afvR", "afvW", "afva", "afvd", "afvn", "afvt", "afv-", "af*", "afx",
+	"aF",
+	"ag?", "ag", "aga", "agA", "agc", "agC", "agd", "agf", "agi", "agr", "agR", "agx", "agg", "ag-",
+	"agn?", "agn", "agn-", "age?", "age", "age-",
+	"agl", "agfl",
+	"ah?", "ah", "ah.", "ah-", "ah*", "aha", "ahb", "ahc", "ahe", "ahf", "ahh", "ahi?", "ahi", "ahj", "aho",
+	"ahp", "ahr", "ahs", "ahS", "aht",
+	"ai", "aL", "an",
+	"ao?", "ao", "aoj", "aoe", "aor", "aos", "aom", "aod", "aoda", "aoc", "ao*",
+	"aO", "ap",
+	"ar?", "ar", "ar0", "ara?", "ara", "ara+", "ara-", "aras", "arA", "arC", "arr", "arrj", "ar=",
+	"arb", "arc", "ard", "arn", "aro", "arp?", "arp", "arpi", "arp.", "arpj", "arps",
+	"ars", "art", "arw",
+	"as?", "as", "asc", "asca", "asf", "asj", "asl", "ask",
+	"av?", "av", "avj", "av*", "avr", "avra", "avraj", "avrr", "avrD",
+	"at",
+	"ax?", "ax", "ax*", "ax-", "ax-*", "axc", "axC", "axg", "axg*", "axgj", "axd", "axw", "axj", "axF",
+	"axt", "axf", "ax.", "axff", "axffj", "axs",
+	"b?", "b", "b+", "b-", "bf", "bm",
+	"c?", "c", "c1", "c4", "c8", "cc", "ccd", "cf", "cg?", "cg", "cgf", "cgff", "cgfc", "cgfn", "cgo",
+	"cu?", "cu", "cu1", "cu2", "cu4", "cu8", "cud",
+	"cv", "cv1", "cv2", "cv4", "cv8",
+	"cV", "cV1", "cV2", "cV4", "cV8",
+	"cw?", "cw", "cw*", "cwr", "cwu",
+	"cx", "cx*", "cX",
+	"cl", "cls", "clear",
+	"d?", "db ", "db-", "db-*", "db.", "dbj", "dbc", "dbC", "dbd", "dbe", "dbs", "dbf", "dbm", "dbn",
+	"db?", "dbi", "dbi.", "dbix", "dbic", "dbie", "dbid", "dbis", "dbite", "dbitd", "dbits", "dbh", "dbh-",
+	"dbt", "dbt*", "dbt=", "dbtv", "dbtj", "dbta", "dbte", "dbtd", "dbts", "dbx", "dbw",
+	"dc?", "dc", "dca", "dcb", "dcc", "dccu", "dcf", "dck", "dcp", "dcr", "dcs", "dcs*", "dct", "dcu", "dcu.",
+	"dd?", "dd", "dd-", "dd*", "dds", "ddd", "ddr", "ddw",
+	"de",
+	"dg",
+	"dH",
+	"di?", "di", "di*", "diq", "dij",
+	"dk?", "dk", "dko", "dkj",
+	"dL?", "dL", "dLq", "dLj",
+	"dm?", "dm", "dm=", "dm.", "dm*", "dm-", "dmd",
+	"dmh?", "dmh", "dmha", "dmhb", "dmhbg", "dmhc", "dmhf", "dmhg", "dmhi", "dmhm", "dmht",
+	"dmi?", "dmi", "dmi*", "dmi.", "dmiv",
+	"dmj",
+	"dml?", "dml",
+	"dmm?", "dmm", "dmm*", "dmm.", "dmmj",
+	"dmp?", "dmp",
+	"dms?", "dms", "dmsj", "dms*", "dms-", "dmsA", "dmsC", "dmsd", "dmsw", "dmsa", "dmsf", "dmst",
+	"dmS", "dmS*",
+	"do?", "do", "dor", "doo",
+	"dp?", "dp", "dpj", "dpl", "dplj", "dp-", "dp=", "dpa", "dpc", "dpc*", "dpe", "dpf", "dpk", "dpn", "dptn", "dpt",
+	"dr?", "dr", "drps", "drpj", "drr", "drrj", "drs", "drs+", "drs-", "drt", "drt*", "drtj", "drw", "drx", "drx-",
+	".dr*", ".dr-",
+	"ds?", "ds", "dsb", "dsf", "dsi", "dsl", "dso", "dsp", "dss", "dsu", "dsui", "dsuo", "dsue", "dsuf",
+	"dt?", "dt", "dt%", "dt*", "dt+", "dt-", "dtD", "dta", "dtc", "dtd", "dte", "dte-*", "dtei", "dtek",
+	"dtg", "dtg*", "dtgi",
+	"dtr",
+	"dts?", "dts", "dts+", "dts-", "dtsf", "dtst", "dtsC", "dtt",
+	"dw",
+	"dx?", "dx", "dxa", "dxe", "dxr", "dxs",
+	"e?", "e", "e-", "e*", "e!", "ec", "ee?", "ee", "?ed", "ed", "ej", "env", "er", "es" "et", "ev", "evj",
+	"ec?", "ec", "ec*", "ecd", "ecr", "ecs", "ecj", "ecc", "eco", "ecp", "ecn",
+	"ecH?", "ecH", "ecHi", "ecHw", "ecH-",
+	"f?", "f", "f.", "f*", "f-", "f--", "f+", "f=", "fa", "fb", "fc?", "fc", "fC", "fd", "fe-", "fe",
+	"ff", "fi", "fg", "fj",
+	"fl", "fla", "fm", "fn", "fnj", "fo", "fO", "fr", "fR", "fR?",
+	"fs?", "fs", "fs*", "fsj", "fs-", "fs+", "fs-.", "fsq", "fsm", "fss", "fss*", "fssj", "fsr",
+	"ft?", "ft", "ftn", "fV", "fx", "fq",
+	"fz?", "fz", "fz-", "fz.", "fz:", "fz*",
+	"g?", "g", "gw", "gc", "gl?", "gl", "gs", "gi", "gp", "ge", "gr", "gS",
+	"i?", "i", "ij", "iA", "ia", "ib", "ic", "icc", "iC",
+	"id?", "id", "idp", "idpi", "idpi*", "idpd", "iD", "ie", "iee", "iE", "iE.",
+	"ih", "iHH", "ii", "iI", "ik", "il", "iL", "im", "iM", "io", "iO?", "iO",
+	"ir", "iR", "is", "is.", "iS", "iS.", "iS=", "iSS",
+	"it", "iV", "iX", "iz", "izj", "izz", "izzz", "iz-", "iZ",
+	"k?", "k", "ko", "kd", "ks", "kj",
+	"l",
+	"L?", "L", "L-", "Ll", "LL", "La", "Lc", "Ld", "Lh", "Li", "Lo",
+	"m?", "m", "m*", "ml", "m-", "md", "mf?", "mf", "mg", "mo", "mi", "mp", "ms", "my",
+	"o?", "o", "o-", "o--", "o+", "oa", "oa-", "oq", "o*", "o.", "o=",
+	"ob?", "ob", "ob*", "obo", "obb", "oba", "obf", "obj", "obr", "ob-", "ob-*",
+	"oc", "of", "oi", "oj", "oL", "om", "on",
+	"oo?", "oo", "oo+", "oob", "ood", "oom", "oon", "oon+", "oonn", "oonn+",
+	"op",  "ox",
+	"p?", "p-", "p=", "p2", "p3", "p6?", "p6", "p6d", "p6e", "p8?", "p8", "p8f", "p8j",
+	"pa?", "paD", "pad", "pade", "pae", "pA",
+	"pb?", "pb", "pB", "pxb", "pB?",
+	"pc?", "pc", "pc*", "pca", "pcA", "pcd", "pch", "pcj", "pcp", "pcs", "pcS", "pcw",
+	"pC?", "pC", "pCa", "pCA", "pCc", "pCd", "pCD", "pCx", "pCw",
+	"pd?", "pd", "pd--", "pD", "pda", "pdb", "pdc", "pdC", "pdf", "pdi", "pdj", "pdJ",
+	"pdk", "pdl", "pdp", "pdr", "pdr.", "pdR", "pds?", "pds", "pdsb", "pdsf", "pdt",
+	"pD",
+	"pf?", "pf", "pf??", "pf???", "pf.", "pfj", "pfj.", "pf*", "pf*.", "pfd", "pfd.",
+	"pfo", "pfq", "pfv", "pfv.", "pfs", "pfs.",
+	"pF?", "pF", "pFa", "pFaq", "pFo", "pFp", "pFx",
+	"pg?", "pg", "pg*", "pg-*",
+	"ph?", "ph", "ph=",
+	"pi?", "pi", "pia", "pib", "pid", "pie", "pif?", "pif", "pifc", "pifcj", "pifj", "pij", "pir",
+	"pI?", "pI", "pIa", "pIb", "pId", "pIe", "pIf?", "pIf", "pIfc", "pIfcj", "pIfj", "pIj",	"pIr",
+	"pj?", "pj", "pj.", "pj..",
+	"pk?", "pk", "pK?", "pK",
+	"pm?", "pm",
+	"pq?", "pq", "pqi", "pqz",
+	"pr?", "pr", "prc", "prl", "prx", "prg?", "prg", "prgi", "prgo", "prz",
+	"ps?", "ps", "psb", "psi", "psj", "psp", "pss", "psu", "psw", "psW", "psx", "psz", "ps+",
+	"pt?", "pt", "pt.", "ptd", "pth", "ptn",
+	"pu?", "pu", "puw", "pU",
+	"pv?", "pv", "pv1", "pv2", "pv4", "pv8", "pvz", "pvj", "pvh", "pv1j", "pv2j", "pv4j", "pv8j",
+	"pv1h", "pv2h", "pv4h", "pv8h",
+	"px?", "px", "px/", "px0", "pxa", "pxA?", "pxA", "pxb", "pxc", "pxd?", "pxd", "pxd2", "pxd4", "pxd8",
+	"pxe", "pxf", "pxh", "pxH", "pxi", "pxl", "pxo", "pxq", "pxq", "pxQ", "pxQq", "pxr", "pxrj",
+	"pxs", "pxt", "pxt*", "pxt.", "pxw", "pxW", "pxWq", "pxx", "pxX",
+	"pz?", "pz", "pzp", "pzf", "pzs", "pz0", "pzF", "pze", "pzh",
+	"P?", "P", "Pc", "Pd", "Pi", "Pn", "Pnj", "Po", "Ps", "PS", "P-",
+	"q?", "q", "q!", "q!!", "q!!!", "qy", "qn", "qyy", "qyn", "qny", "qnn",
+	"r?", "r", "r-", "r+", "rh",
+	"s?", "s", "s:", "s-", "s-*", "s--", "s+", "s++", "sj", "s*", "s=", "s!", "s/", "s/x", "s.", "sa", "sb",
+	"sC?", "sC", "sC*",
+	"sf", "sf.", "sg", "sG", "sl?", "sl", "sl+", "sl-", "slc", "sll", "sn", "sp", "so", "sr", "ss",
+	"t?", "t", "tj", "t*", "t-", "t-*", "ta", "tb", "tc", "te?", "te", "tej", "teb", "tec",
+	"td?", "td", "td-", "tf", "tk", "tl", "tn", "to", "tos", "tp", "tpx", "ts?", "ts", "tsj", "ts*", "tsc", "tss",
+	"tu?", "tu", "tuj", "tu*", "tuc", "tt?", "tt", "ttj", "ttc",
+	"T?", "T", "T*", "T-", "Tl", "Tj", "Tm", "Ts", "TT", "T=", "T=.", "T=&",
+	"u?", "u", "uw", "us", "uc",
+	"v", "V", "v!", "vv", "vV", "vVV", "VV",
+	"w?", "w", "w1+", "w1-", "w2+", "w2-", "w4+", "w4-", "w8+", "w8-",
+	"w0", "w", "w6", "w6d", "w6e", "wa", "wa*", "waf", "wao?", "wao",
+	"wA?", "wA", "wB", "wB-", "wc", "wcj", "wc-", "wc+", "wc*", "wcr", "wci", "wcp", "wcp*", "wcpi",
+	"wd", "we?", "we", "wen", "weN", "wes", "wex", "weX",
+	"wf?", "wf", "wff", "wfs", "wF", "wh", "wm",
+	"wo?", "wo", "wo2", "wo4", "woa", "woA", "wod", "woD", "woe", "woE", "wol", "wom", "woo",
+	"wop?", "wop", "wopD", "wopD*", "wopO",
+	"wp?", "wp", "wr", "ws",
+	"wt?", "wt", "wta", "wtf", "wtf!", "wtff", "wts",
+	"wu",
+	"wv?", "wv", "wv1", "wv2",  "wv4", "wv8",
+	"ww",
+	"wx?", "wx", "wxf", "wxs",
+	"wz",
+	"x?", "x", "x/", "x0", "xa", "xA?", "xA", "xb", "xc", "xd?", "xd", "xd2", "xd4", "xd8",
+	"xe", "xf", "xh", "xH", "xi", "xl", "xo", "xq", "xq", "xQ", "xQq", "xr", "xrj",
+	"xs", "xt", "xt*", "xt.", "xw", "xW", "xWq", "xx", "xX",
+	"y?", "y", "yz", "yp", "yx", "ys", "yt", "ytf", "yf", "yfa", "yfx", "yw", "ywx", "yy",
+	"z?", "z", "z*", "zj", "z-", "z-*",
+	"za?", "za??", "za", "zaf", "zaF", "zg",
+	"zo?", "zo", "zoz", "zos",
+	"zf?", "zfd", "zfs", "zfz",
+	"z/?", "z/", "z/*",
 	"zc",
-	"zs", "zs+", "zs-", "zs-*", "zsr",
-	"#!pipe",
+	"zs?", "zs", "zs-", "zs-*", "zs+", "zsr",
+	"zi",
+	"?", "?v", "?$?", "?@?", "?>?",
 	NULL
 };
 
@@ -1040,9 +1193,14 @@ static void autocomplete_evals(RLine* line, const char* str) {
 	if (!core || !str) {
 		return;
 	}
-	int i = 0, n = strlen (str);
+	int i = 0, n;
 	RConfigNode *bt;
 	RListIter *iter;
+	char *tmp = strrchr (str, ' ');
+	if (tmp) {
+		str = tmp + 1;
+	}
+	n = strlen (str);
 	r_list_foreach (core->config->nodes, iter, bt) {
 		if (!strncmp (bt->name, str, n)) {
 			tmp_argv[i++] = bt->name;
@@ -1132,23 +1290,20 @@ static void autocomplete_breakpoints(RLine* line, const char* str) {
 	line->completion.argv = tmp_argv;
 }
 
+static bool add_argv(RFlagItem *fi, void *user) {
+	int *i = (int *)user;
+	tmp_argv[(*i)++] = fi->name;
+	return *i != TMP_ARGV_SZ - 1;
+}
+
 static void autocomplete_flags(RLine* line, const char* str) {
 	RCore *core = line->user;
 	if (!core || !str) {
 		return;
 	}
-	RListIter *iter;
-	RFlagItem *flag;
 	int n, i = 0;
 	n = strlen (str);
-	r_list_foreach (core->flags->flags, iter, flag) {
-		if (!strncmp (flag->name, str, n)) {
-			tmp_argv[i++] = flag->name;
-			if (i == (TMP_ARGV_SZ - 1)) {
-				break;
-			}
-		}
-	}
+	r_flag_foreach_prefix (core->flags, str, n, add_argv, &i);
 	tmp_argv[i] = NULL;
 	line->completion.argc = i;
 	line->completion.argv = tmp_argv;
@@ -1160,20 +1315,22 @@ static void autocomplete_zignatures(RLine* line, const char* msg) {
 		return;
 	}
 	int length = strlen (msg);
-	RSpaces zs = core->anal->zign_spaces;
-	int j, i = 0;
-	for (j = 0; j < R_SPACES_MAX; j++) {
-		if (zs.spaces[j]) {
-			if (i == TMP_ARGV_SZ - 1) {
-				break;
-			}
-			if (!strncmp (msg, zs.spaces[j], length)) {
-				if (i + 1 < TMP_ARGV_SZ) {
-					tmp_argv[i++] = zs.spaces[j];
-				}
+	RSpaces *zs = &core->anal->zign_spaces;
+	RSpace *s;
+	RSpaceIter it;
+	int i = 0;
+
+	r_spaces_foreach (zs, it, s) {
+		if (i == TMP_ARGV_SZ - 1) {
+			break;
+		}
+		if (!strncmp (msg, s->name, length)) {
+			if (i + 1 < TMP_ARGV_SZ) {
+				tmp_argv[i++] = s->name;
 			}
 		}
 	}
+
 	if (strlen (msg) == 0 && i + 1 < TMP_ARGV_SZ) {
 		tmp_argv[i++] = "*";
 	}
@@ -1189,23 +1346,21 @@ static void autocomplete_flagspaces(RLine* line, const char* msg) {
 	}
 	int length = strlen (msg);
 	RFlag *flag = core->flags;
-	int j, i = 0;
-	for (j = 0; j < R_FLAG_SPACES_MAX - 1; j++) {
-		if (flag->spaces[j] && flag->spaces[j][0]) {
-			if (i == TMP_ARGV_SZ - 1) {
-				break;
-			}
-			if (!strncmp (msg, flag->spaces[j], length)) {
-				if (i + 1 < TMP_ARGV_SZ) {
-					tmp_argv[i++] = flag->spaces[j];
-				}
+	int i = 0;
+	RSpaceIter it;
+	RSpace *s;
+	r_flag_space_foreach (flag, it, s) {
+		if (i == TMP_ARGV_SZ - 1) {
+			break;
+		}
+		if (!strncmp (msg, s->name, length)) {
+			if (i + 1 < TMP_ARGV_SZ) {
+				tmp_argv[i++] = s->name;
 			}
 		}
 	}
-	if (flag->spaces[j] && !strncmp (msg, flag->spaces[j], strlen (msg))) {
-		if (i + 1 < TMP_ARGV_SZ) {
-			tmp_argv[i++] = "*";
-		}
+	if (i + 1 < TMP_ARGV_SZ) {
+		tmp_argv[i++] = "*";
 	}
 	tmp_argv[i] = NULL;
 	line->completion.argc = i;
@@ -1453,7 +1608,6 @@ static bool find_autocomplete(RLine *line) {
 static int autocomplete(RLine *line) {
 	RCore *core = line->user;
 	RListIter *iter;
-	RFlagItem *flag;
 	if (core) {
 		r_core_free_autocomplete (core);
 		char *pipe = strchr (line->buffer.data, '>');
@@ -1465,14 +1619,7 @@ static int autocomplete(RLine *line) {
 			ptr = (char *)r_str_trim_ro (ptr + 1);
 			n = strlen (ptr);//(line->buffer.data+sdelta);
 			sdelta = (int)(size_t)(ptr - line->buffer.data);
-			r_list_foreach (core->flags->flags, iter, flag) {
-				if (!strncmp (flag->name, line->buffer.data+sdelta, n)) {
-					tmp_argv[i++] = flag->name;
-					if (i == TMP_ARGV_SZ - 1) {
-						break;
-					}
-				}
-			}
+			r_flag_foreach_prefix (core->flags, line->buffer.data + sdelta, n, add_argv, &i);
 			tmp_argv[i] = NULL;
 			line->completion.argc = i;
 			line->completion.argv = tmp_argv;
@@ -1751,6 +1898,12 @@ static const char *r_core_print_offname(void *p, ut64 addr) {
 	return item ? item->name : NULL;
 }
 
+static int r_core_print_offsize(void *p, ut64 addr) {
+	RCore *c = (RCore*)p;
+	RFlagItem *item = r_flag_get_i (c->flags, addr);
+	return item ? item->size: -1;
+}
+
 /**
  * Disassemble one instruction at specified address.
  */
@@ -1833,7 +1986,7 @@ static int is_string (const ut8 *buf, int size, int *len) {
 static char *r_core_anal_hasrefs_to_depth(RCore *core, ut64 value, int depth);
 R_API char *r_core_anal_hasrefs(RCore *core, ut64 value, bool verbose) {
 	if (verbose) {
-		return r_core_anal_hasrefs_to_depth(core, value, r_config_get_i (core->config, "hex.depth"));
+		return r_core_anal_hasrefs_to_depth (core, value, r_config_get_i (core->config, "hex.depth"));
 	}
 	RFlagItem *fi = r_flag_get_i (core->flags, value);
 	if (fi) {
@@ -1844,20 +1997,47 @@ R_API char *r_core_anal_hasrefs(RCore *core, ut64 value, bool verbose) {
 
 static char *r_core_anal_hasrefs_to_depth(RCore *core, ut64 value, int depth) {
 	RStrBuf *s = r_strbuf_new (NULL);
-	ut64 type;
-	RBinSection *sect;
 	char *mapname = NULL;
-	RAnalFunction *fcn;
 	RFlagItem *fi = r_flag_get_i (core->flags, value);
-	type = r_core_anal_address (core, value);
-	fcn = r_anal_get_fcn_in (core->anal, value, 0);
+	ut64 type = r_core_anal_address (core, value);
+	RAnalFunction *fcn = r_anal_get_fcn_in (core->anal, value, 0);
 	if (value && value != UT64_MAX) {
 		RDebugMap *map = r_debug_map_get (core->dbg, value);
 		if (map && map->name && map->name[0]) {
 			mapname = strdup (map->name);
 		}
 	}
-	sect = value? r_bin_get_section_at (r_bin_cur_object (core->bin), value, true): NULL;
+	int bits = core->assembler->bits;
+	switch (bits) {
+	case 16: // umf, not in sync with pxr
+		{
+			st16 v = (st16)(value & UT16_MAX);
+			st16 h = UT16_MAX / 0x100;
+			if (v > -h && v < h) {
+				r_strbuf_appendf (s," %hd", v);
+			}
+		}
+		break;
+	case 32:
+		{
+			st32 v = (st32)(value & 0xffffffff);
+			st32 h = UT32_MAX / 0x10000;
+			if (v > -h && v < h) {
+				r_strbuf_appendf (s," %d", v);
+			}
+		}
+		break;
+	case 64:
+		{
+			st64 v = (st64)(value);
+			st64 h = UT64_MAX / 0x1000000;
+			if (v > -h && v < h) {
+				r_strbuf_appendf (s," %"PFMT64d, v);
+			}
+		}
+		break;
+	}
+	RBinSection *sect = value? r_bin_get_section_at (r_bin_cur_object (core->bin), value, true): NULL;
 	if(! ((type&R_ANAL_ADDR_TYPE_HEAP)||(type&R_ANAL_ADDR_TYPE_STACK)) ) {
 		// Do not repeat "stack" or "heap" words unnecessarily.
 		if (sect && sect->name[0]) {
@@ -1869,7 +2049,10 @@ static char *r_core_anal_hasrefs_to_depth(RCore *core, ut64 value, int depth) {
 		}
 	}
 	if (fi) {
-		r_strbuf_appendf (s, " %s", fi->name);
+		RRegItem *r = r_reg_get (core->dbg->reg, fi->name, -1);
+		if (!r) {
+			r_strbuf_appendf (s, " %s", fi->name);
+		}
 	}
 	if (fcn) {
 		r_strbuf_appendf (s, " %s", fcn->name);
@@ -1937,7 +2120,7 @@ static char *r_core_anal_hasrefs_to_depth(RCore *core, ut64 value, int depth) {
 	}
 	{
 		ut8 buf[128], widebuf[256];
-		const char *c = r_config_get_i (core->config, "scr.color")? core->cons->pal.ai_ascii: "";
+		const char *c = r_config_get_i (core->config, "scr.color")? core->cons->context->pal.ai_ascii: "";
 		const char *cend = (c && *c) ? Color_RESET: "";
 		int len, r;
 		if (r_io_read_at (core->io, value, buf, sizeof (buf))) {
@@ -2008,27 +2191,27 @@ R_API const char *r_core_anal_optype_colorfor(RCore *core, ut64 addr, bool verbo
 	}
 	type = r_core_anal_address (core, addr);
 	if (type & R_ANAL_ADDR_TYPE_EXEC) {
-		return core->cons->pal.ai_exec; //Color_RED;
+		return core->cons->context->pal.ai_exec; //Color_RED;
 	}
 	if (type & R_ANAL_ADDR_TYPE_WRITE) {
-		return core->cons->pal.ai_write; //Color_BLUE;
+		return core->cons->context->pal.ai_write; //Color_BLUE;
 	}
 	if (type & R_ANAL_ADDR_TYPE_READ) {
-		return core->cons->pal.ai_read; //Color_GREEN;
+		return core->cons->context->pal.ai_read; //Color_GREEN;
 	}
 	if (type & R_ANAL_ADDR_TYPE_SEQUENCE) {
-		return core->cons->pal.ai_seq; //Color_MAGENTA;
+		return core->cons->context->pal.ai_seq; //Color_MAGENTA;
 	}
 	if (type & R_ANAL_ADDR_TYPE_ASCII) {
-		return core->cons->pal.ai_ascii; //Color_YELLOW;
+		return core->cons->context->pal.ai_ascii; //Color_YELLOW;
 	}
 	return NULL;
 }
 
 static void r_core_setenv (RCore *core) {
 	char *e = r_sys_getenv ("PATH");
-	char *h = r_str_home (R2_HOME_BIN R_SYS_ENVSEP);
-	char *n = r_str_newf ("%s%s", h, e);
+	char *h = r_str_home (R2_HOME_BIN);
+	char *n = r_str_newf ("%s%s%s", h, R_SYS_ENVSEP, e);
 	r_sys_setenv ("PATH", n);
 	free (n);
 	free (h);
@@ -2128,14 +2311,16 @@ static void init_autocomplete (RCore* core) {
 	r_core_autocomplete_add (core->autocomplete, "dbtd", R_CORE_AUTOCMPLT_BRKP, true);
 	r_core_autocomplete_add (core->autocomplete, "dbts", R_CORE_AUTOCMPLT_BRKP, true);
 	/* Project */
+	r_core_autocomplete_add (core->autocomplete, "Pc", R_CORE_AUTOCMPLT_PRJT, true);
+	r_core_autocomplete_add (core->autocomplete, "Pd", R_CORE_AUTOCMPLT_PRJT, true);
+	r_core_autocomplete_add (core->autocomplete, "Pi", R_CORE_AUTOCMPLT_PRJT, true);
 	r_core_autocomplete_add (core->autocomplete, "Po", R_CORE_AUTOCMPLT_PRJT, true);
+	r_core_autocomplete_add (core->autocomplete, "Ps", R_CORE_AUTOCMPLT_PRJT, true);
+	r_core_autocomplete_add (core->autocomplete, "P-", R_CORE_AUTOCMPLT_PRJT, true);
 	/* zignatures */
 	r_core_autocomplete_add (core->autocomplete, "zs", R_CORE_AUTOCMPLT_ZIGN, true);
 	/* flag spaces */
 	r_core_autocomplete_add (core->autocomplete, "fs", R_CORE_AUTOCMPLT_FLSP, true);
-	/* macros */
-	r_core_autocomplete_add (core->autocomplete, ".(", R_CORE_AUTOCMPLT_MACR, true);
-	r_core_autocomplete_add (core->autocomplete, "(-", R_CORE_AUTOCMPLT_MACR, true);
 	/* file path */
 	r_core_autocomplete_add (core->autocomplete, "o", R_CORE_AUTOCMPLT_FILE, true);
 	r_core_autocomplete_add (core->autocomplete, "idp", R_CORE_AUTOCMPLT_FILE, true);
@@ -2175,6 +2360,9 @@ static void init_autocomplete (RCore* core) {
 	r_core_autocomplete_add (core->autocomplete, "vim", R_CORE_AUTOCMPLT_FILE, true);
 	r_core_autocomplete_add (core->autocomplete, "less", R_CORE_AUTOCMPLT_FILE, true);
 	r_core_autocomplete_add (r_core_autocomplete_add (core->autocomplete, "ls", R_CORE_AUTOCMPLT_DFLT, true), "-l", R_CORE_AUTOCMPLT_FILE, true);
+	/* macros */
+	r_core_autocomplete_add (core->autocomplete, ".(", R_CORE_AUTOCMPLT_MACR, true);
+	r_core_autocomplete_add (core->autocomplete, "(-", R_CORE_AUTOCMPLT_MACR, true);
 	/* theme */
 	r_core_autocomplete_add (core->autocomplete, "eco", R_CORE_AUTOCMPLT_THME, true);
 	/* just for hints */
@@ -2198,6 +2386,121 @@ static char *get_comments_cb(void *user, ut64 addr) {
 	return r_core_anal_get_comments ((RCore *)user, addr);
 }
 
+R_IPI void spaces_list(RSpaces *sp, int mode) {
+	RSpaceIter it;
+	RSpace *s;
+	const RSpace *cur = r_spaces_current (sp);
+	PJ *pj = NULL;
+	if (mode == 'j') {
+		pj = pj_new ();
+		pj_a (pj);
+	}
+	r_spaces_foreach (sp, it, s) {
+		int count = r_spaces_count (sp, s->name);
+		if (mode == 'j') {
+			pj_o (pj);
+			pj_ks (pj, "name", s->name);
+			pj_ki (pj, "count", count);
+			pj_kb (pj, "selected", cur == s);
+			pj_end (pj);
+		} else if (mode == '*') {
+			r_cons_printf ("%s %s\n", sp->name, s->name);
+		} else {
+			r_cons_printf ("%5d %c %s\n", count, (!cur || cur == s)? '*': '.',
+				s->name);
+		}
+	}
+	if (mode == '*' && r_spaces_current (sp)) {
+		r_cons_printf ("%s %s # current\n", sp->name, r_spaces_current_name (sp));
+	}
+	if (mode == 'j') {
+		pj_end (pj);
+		r_cons_printf ("%s\n", pj_string (pj));
+		pj_free (pj);
+	}
+}
+
+static void cb_event_handler(REvent *ev, int event_type, void *user, void *data) {
+	RCore *core = (RCore *)ev->user;
+	if (!core->log_events) {
+		return;
+	}
+	REventMeta *rems = data;
+	char *str = r_base64_encode_dyn (rems->string, -1);
+	switch (event_type) {
+	case R_EVENT_META_SET:
+		switch (rems->type) {
+		case 'C':
+			r_core_log_add (ev->user, sdb_fmt (":add-comment 0x%08"PFMT64x" %s\n", rems->addr, str? str: ""));
+			break;
+		default:
+			break;
+		}
+		break;
+	case R_EVENT_META_DEL:
+		switch (rems->type) {
+		case 'C':
+			r_core_log_add (ev->user, sdb_fmt (":del-comment 0x%08"PFMT64x, rems->addr));
+			break;
+		default:
+			r_core_log_add (ev->user, sdb_fmt (":del-comment 0x%08"PFMT64x, rems->addr));
+			break;
+		}
+		break;
+	case R_EVENT_META_CLEAR:
+		switch (rems->type) {
+		case 'C':
+			r_core_log_add (ev->user, sdb_fmt (":clear-comments 0x%08"PFMT64x, rems->addr));
+			break;
+		default:
+			r_core_log_add (ev->user, sdb_fmt (":clear-comments 0x%08"PFMT64x, rems->addr));
+			break;
+		}
+		break;
+	default:
+		// TODO
+		break;
+	}
+	free (str);
+}
+
+static RFlagItem *core_flg_class_set(RFlag *f, const char *name, ut64 addr, ut32 size) {
+	r_flag_space_push (f, R_FLAGS_FS_CLASSES);
+	RFlagItem *res = r_flag_set (f, name, addr, size);
+	r_flag_space_pop (f);
+	return res;
+}
+
+static RFlagItem *core_flg_class_get(RFlag *f, const char *name) {
+	r_flag_space_push (f, R_FLAGS_FS_CLASSES);
+	RFlagItem *res = r_flag_get (f, name);
+	r_flag_space_pop (f);
+	return res;
+}
+
+static RFlagItem *core_flg_fcn_set(RFlag *f, const char *name, ut64 addr, ut32 size) {
+	r_flag_space_push (f, R_FLAGS_FS_FUNCTIONS);
+	RFlagItem *res = r_flag_set (f, name, addr, size);
+	r_flag_space_pop (f);
+	return res;
+}
+
+R_API RFlagItem *r_core_flag_get_by_spaces(RFlag *f, ut64 off) {
+	return r_flag_get_by_spaces (f, off,
+		R_FLAGS_FS_FUNCTIONS,
+		R_FLAGS_FS_SIGNS,
+		R_FLAGS_FS_SYMBOLS,
+		R_FLAGS_FS_IMPORTS,
+		R_FLAGS_FS_RELOCS,
+		R_FLAGS_FS_STRINGS,
+		R_FLAGS_FS_CLASSES,
+		R_FLAGS_FS_RESOURCES,
+		R_FLAGS_FS_SYMBOLS_SECTIONS,
+		R_FLAGS_FS_SECTIONS,
+		R_FLAGS_FS_SEGMENTS,
+		NULL);
+}
+
 R_API bool r_core_init(RCore *core) {
 	core->blocksize = R_CORE_BLOCKSIZE;
 	core->block = (ut8 *)calloc (R_CORE_BLOCKSIZE + 1, 1);
@@ -2208,6 +2511,7 @@ R_API bool r_core_init(RCore *core) {
 	}
 	r_core_setenv (core);
 	core->ev = r_event_new (core);
+	r_event_hook (core->ev, R_EVENT_ALL, cb_event_handler, NULL);
 	core->lock = r_th_lock_new (true);
 	core->max_cmd_depth = R_CORE_CMD_DEPTH + 1;
 	core->cmd_depth = core->max_cmd_depth;
@@ -2221,10 +2525,12 @@ R_API bool r_core_init(RCore *core) {
 	core->http_up = false;
 	ZERO_FILL (core->root_cmd_descriptor);
 	core->print = r_print_new ();
+	core->ropchain = r_list_newf ((RListFree)free);
 	r_core_bind (core, &(core->print->coreb));
 	core->print->user = core;
 	core->print->num = core->num;
 	core->print->offname = r_core_print_offname;
+	core->print->offsize = r_core_print_offsize;
 	core->print->cb_printf = r_cons_printf;
 	core->print->cb_color = r_cons_rainbow_get;
 	core->print->write = mywrite;
@@ -2254,7 +2560,6 @@ R_API bool r_core_init(RCore *core) {
 	core->log = r_core_log_new ();
 	core->times = R_NEW0 (RCoreTimes);
 	core->vmode = false;
-	core->section = NULL;
 	core->oobi = NULL;
 	core->oobi_len = 0;
 	core->printidx = 0;
@@ -2262,7 +2567,7 @@ R_API bool r_core_init(RCore *core) {
 	core->panels_tmpcfg = NULL;
 	core->cmdqueue = NULL;
 	core->cmdrepeat = true;
-	core->yank_buf = r_buf_new();
+	core->yank_buf = r_buf_new ();
 	core->num = r_num_new (&num_callback, &str_callback, core);
 	core->curasmstep = 0;
 	core->egg = r_egg_new ();
@@ -2304,10 +2609,11 @@ R_API bool r_core_init(RCore *core) {
 	core->assembler->num = core->num;
 	r_asm_set_user_ptr (core->assembler, core);
 	core->anal = r_anal_new ();
+	core->gadgets = r_list_newf ((RListFree)r_core_gadget_free);
 	core->anal->ev = core->ev;
 	core->anal->log = r_core_anal_log;
 	core->anal->read_at = r_core_anal_read_at;
-	core->anal->meta_spaces.cb_printf = r_cons_printf;
+	core->anal->flag_get = r_core_flag_get_by_spaces;
 	core->anal->cb.on_fcn_new = on_fcn_new;
 	core->anal->cb.on_fcn_delete = on_fcn_delete;
 	core->anal->cb.on_fcn_rename = on_fcn_rename;
@@ -2354,7 +2660,11 @@ R_API bool r_core_init(RCore *core) {
 	r_core_bind (core, &(core->fs->cob));
 	r_io_bind (core->io, &(core->bin->iob));
 	r_flag_bind (core->flags, &(core->anal->flb));
+	core->anal->flg_class_set = core_flg_class_set;
+	core->anal->flg_class_get = core_flg_class_get;
+	core->anal->flg_fcn_set = core_flg_fcn_set;
 	r_anal_bind (core->anal, &(core->parser->analb));
+	core->parser->flag_get = r_core_flag_get_by_spaces;
 
 	r_core_bind (core, &(core->anal->coreb));
 
@@ -2428,6 +2738,7 @@ R_API RCore *r_core_fini(RCore *c) {
 	/* TODO: it leaks as shit */
 	//update_sdb (c);
 	// avoid double free
+	r_list_free (c->ropchain);
 	r_core_free_autocomplete (c);
 	r_event_free (c->ev);
 	R_FREE (c->cmdlog);
@@ -2441,6 +2752,7 @@ R_API RCore *r_core_fini(RCore *c) {
 	R_FREE (c->block);
 	r_core_autocomplete_free (c->autocomplete);
 
+	r_list_free (c->gadgets);
 	r_list_free (c->undos);
 	r_num_free (c->num);
 	// TODO: sync or not? sdb_sync (c->sdb);
@@ -2457,7 +2769,8 @@ R_API RCore *r_core_fini(RCore *c) {
 	c->rcmd = r_cmd_free (c->rcmd);
 	r_list_free (c->cmd_descriptors);
 	c->anal = r_anal_free (c->anal);
-	c->assembler = r_asm_free (c->assembler);
+	r_asm_free (c->assembler);
+	c->assembler = NULL;
 	c->print = r_print_free (c->print);
 	c->bin = r_bin_free (c->bin); // XXX segfaults rabin2 -c
 	c->lang = r_lang_free (c->lang); // XXX segfaults
@@ -2577,7 +2890,7 @@ static void set_prompt (RCore *r) {
 	if (r_config_get_i (r->config, "scr.prompt.file")) {
 		free (filename);
 		filename = r_str_newf ("\"%s\"",
-			r_file_basename (r->io->desc->name));
+			r->io->desc ? r_file_basename (r->io->desc->name) : "");
 	}
 	if (r->cmdremote) {
 		char *s = r_core_cmd_str (r, "s");
@@ -2587,8 +2900,8 @@ static void set_prompt (RCore *r) {
 	}
 #if __UNIX__
 	if (r_config_get_i (r->config, "scr.color")) {
-		BEGIN = r->cons->pal.prompt;
-		END = r->cons->pal.reset;
+		BEGIN = r->cons->context->pal.prompt;
+		END = r->cons->context->pal.reset;
 	}
 #endif
 	// TODO: also in visual prompt and disasm/hexdump ?
@@ -2612,7 +2925,11 @@ static void set_prompt (RCore *r) {
 		}
 
 		if (!promptset) {
-			snprintf (p, sizeof (p), "0x%08" PFMT64x, r->offset);
+			if (r->print->wide_offsets && r->dbg->bits & R_SYS_BITS_64) {
+				snprintf (p, sizeof (p), "0x%016" PFMT64x, r->offset);
+			} else {
+				snprintf (p, sizeof (p), "0x%08" PFMT64x, r->offset);
+			}
 		}
 		snprintf (tmp, sizeof (tmp), "%s%s", sec, p);
 	}
@@ -2627,12 +2944,11 @@ static void set_prompt (RCore *r) {
 }
 
 R_API int r_core_prompt(RCore *r, int sync) {
-	int ret, rnv;
 	char line[4096];
 
-	rnv = r->num->value;
+	int rnv = r->num->value;
 	set_prompt (r);
-	ret = r_cons_fgets (line, sizeof (line), 0, NULL);
+	int ret = r_cons_fgets (line, sizeof (line), 0, NULL);
 	if (ret == -2) {
 		return R_CORE_CMD_EXIT; // ^D
 	}
@@ -2645,6 +2961,9 @@ R_API int r_core_prompt(RCore *r, int sync) {
 	}
 	free (r->cmdqueue);
 	r->cmdqueue = strdup (line);
+        if (r->scr_gadgets && *line && *line != 'q') {
+                r_core_cmd0 (r, "pg");
+        }
 	return true;
 }
 
@@ -2710,12 +3029,12 @@ R_API int r_core_block_size(RCore *core, int bsize) {
 }
 
 R_API int r_core_seek_align(RCore *core, ut64 align, int times) {
-	int diff, inc = (times >= 0)? 1: -1;
+	int inc = (times >= 0)? 1: -1;
 	ut64 seek = core->offset;
 	if (!align) {
 		return false;
 	}
-	diff = core->offset%align;
+	int diff = core->offset % align;
 	if (!times) {
 		diff = -diff;
 	} else if (diff) {
@@ -2730,12 +3049,12 @@ R_API int r_core_seek_align(RCore *core, ut64 align, int times) {
 	}
 	while ((times*inc) > 0) {
 		times -= inc;
-		diff += align*inc;
+		diff += (align * inc);
 	}
 	if (diff < 0 && -diff > seek) {
 		seek = diff = 0;
 	}
-	return r_core_seek (core, seek+diff, 1);
+	return r_core_seek (core, seek + diff, 1);
 }
 
 R_API char *r_core_op_str(RCore *core, ut64 addr) {
@@ -3038,7 +3357,7 @@ R_API int r_core_search_cb(RCore *core, ut64 from, ut64 to, RCoreSearchCallback 
 }
 
 R_API char *r_core_editor (const RCore *core, const char *file, const char *str) {
-	const bool interactive = r_config_get_i (core->config, "scr.interactive");
+	const bool interactive = r_cons_is_interactive ();
 	const char *editor = r_config_get (core->config, "cfg.editor");
 	char *name = NULL, *ret = NULL;
 	int len, fd;
@@ -3195,7 +3514,7 @@ static bool isValidAddress (RCore *core, ut64 addr) {
 
 R_API int r_core_search_value_in_range(RCore *core, RInterval search_itv, ut64 vmin,
 				     ut64 vmax, int vsize, bool asterisk, inRangeCb cb) {
-	int i, match, align = core->search->align, hitctr = 0;
+	int i, align = core->search->align, hitctr = 0;
 	bool vinfun = r_config_get_i (core->config, "anal.vinfun");
 	bool vinfunr = r_config_get_i (core->config, "anal.vinfunrange");
 	ut8 buf[4096];
@@ -3251,7 +3570,7 @@ R_API int r_core_search_value_in_range(RCore *core, RInterval search_itv, ut64 v
 			if (align && (addr) % align) {
 				continue;
 			}
-			match = false;
+			int match = false;
 			int left = size - i;
 			if (vsize > left) {
 				break;

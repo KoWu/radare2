@@ -18,6 +18,22 @@ static void mem_free(void *data) {
 	free (mem);
 }
 
+static int reloc_cmp(const void *a, const RBNode *b) {
+	const RBinReloc *ar = (const RBinReloc *)a;
+	const RBinReloc *br = container_of (b, const RBinReloc, vrb);
+	if (ar->vaddr > br->vaddr) {
+		return 1;
+	}
+	if (ar->vaddr < br->vaddr) {
+		return -1;
+	}
+	return 0;
+}
+
+static void reloc_free(RBNode *rbn) {
+	free (container_of (rbn, RBinReloc, vrb));
+}
+
 static void object_delete_items(RBinObject *o) {
 	ut32 i = 0;
 	r_return_if_fail (o);
@@ -26,7 +42,7 @@ static void object_delete_items(RBinObject *o) {
 	r_list_free (o->fields);
 	r_list_free (o->imports);
 	r_list_free (o->libs);
-	r_list_free (o->relocs);
+	r_rbtree_free (o->relocs, reloc_free);
 	r_list_free (o->sections);
 	r_list_free (o->strings);
 	ht_up_free (o->strings_db);
@@ -120,7 +136,6 @@ static RList *classes_from_symbols(RBinFile *bf) {
 					}
 				}
 			}
-			r_list_append (classes, c);
 		}
 	}
 	if (r_list_empty (classes)) {
@@ -140,19 +155,19 @@ static bool file_object_add(RBinFile *binfile, RBinObject *o) {
 R_IPI RBinObject *r_bin_object_new(RBinFile *binfile, RBinPlugin *plugin, ut64 baseaddr, ut64 loadaddr, ut64 offset, ut64 sz) {
 	r_return_val_if_fail (binfile && plugin, NULL);
 
-	const ut8 *bytes = r_buf_buffer (binfile->buf);
 	ut64 bytes_sz = r_buf_size (binfile->buf);
 	Sdb *sdb = binfile->sdb;
 	RBinObject *o = R_NEW0 (RBinObject);
 	if (!o) {
 		return NULL;
 	}
-	o->obj_size = bytes && (bytes_sz >= sz + offset)? sz: 0;
+	o->obj_size = (bytes_sz >= sz + offset)? sz: 0;
 	o->boffset = offset;
 	o->strings_db = ht_up_new0 ();
 	o->regstate = NULL;
 	if (!r_id_pool_grab_id (binfile->rbin->ids->pool, &o->id)) {
 		free (o);
+		eprintf ("Cannot grab an id\n");
 		return NULL;
 	}
 	o->kv = sdb_new0 ();
@@ -161,18 +176,15 @@ R_IPI RBinObject *r_bin_object_new(RBinFile *binfile, RBinPlugin *plugin, ut64 b
 	o->plugin = plugin;
 	o->loadaddr = loadaddr != UT64_MAX ? loadaddr : 0;
 
-	if (bytes && plugin && plugin->load_buffer) {
+	if (plugin && plugin->load_buffer) {
 		o->bin_obj = plugin->load_buffer (binfile, binfile->buf, loadaddr, sdb); // bytes + offset, sz, loadaddr, sdb);
 		if (!o->bin_obj) {
-			bprintf (
-				"Error in r_bin_object_new: load_bytes failed "
-				"for %s plugin\n",
-				plugin->name);
+			bprintf ("Error in r_bin_object_new: load_bytes failed for %s plugin\n", plugin->name);
 			sdb_free (o->kv);
 			free (o);
 			return NULL;
 		}
-	} else if (bytes && plugin && plugin->load_bytes && (bytes_sz >= sz + offset)) {
+	} else if (plugin && plugin->load_bytes && (bytes_sz >= sz + offset)) {
 		R_LOG_WARN ("Plugin %s should implement load_buffer method instead of load_bytes.\n", plugin->name);
 		// XXX more checking will be needed here
 		// only use LoadBytes if buffer offset != 0
@@ -182,16 +194,22 @@ R_IPI RBinObject *r_bin_object_new(RBinFile *binfile, RBinPlugin *plugin, ut64 b
 		if (sz < bsz) {
 			bsz = sz;
 		}
-		if (!plugin->load_bytes (binfile, &o->bin_obj, bytes + offset, sz,
-					 loadaddr, sdb)) {
-			bprintf (
-				"Error in r_bin_object_new: load_bytes failed "
-				"for %s plugin\n",
-				plugin->name);
-			sdb_free (o->kv);
+		ut8 *bytes = malloc (sz);
+		if (!bytes) {
+			eprintf ("Cannot allocate %" PFMT64u " bytes\n", sz);
 			free (o);
 			return NULL;
 		}
+		r_buf_read_at (binfile->buf, offset, bytes, sz);
+		if (!plugin->load_bytes (binfile, &o->bin_obj, bytes, sz,
+					 loadaddr, sdb)) {
+			bprintf ("Error in r_bin_object_new: load_bytes failed for %s plugin\n", plugin->name);
+			sdb_free (o->kv);
+			free (bytes);
+			free (o);
+			return NULL;
+		}
+		free (bytes);
 	} else if (plugin->load) {
 		R_LOG_WARN ("Plugin %s should implement load_buffer method instead of load.\n", plugin->name);
 		// XXX - haha, this is a hack.
@@ -254,6 +272,17 @@ static void filter_classes(RBinFile *bf, RList *list) {
 		}
 	}
 	sdb_free (db);
+}
+
+static RBNode *list2rbtree(RList *relocs) {
+	RListIter *it;
+	RBinReloc *reloc;
+	RBNode *res = NULL;
+
+	r_list_foreach (relocs, it, reloc) {
+		r_rbtree_insert (&res, reloc, &reloc->vrb, reloc_cmp);
+	}
+	return res;
 }
 
 R_API int r_bin_object_set_items(RBinFile *binfile, RBinObject *o) {
@@ -349,8 +378,13 @@ R_API int r_bin_object_set_items(RBinFile *binfile, RBinObject *o) {
 	}
 	if (bin->filter_rules & (R_BIN_REQ_RELOCS | R_BIN_REQ_IMPORTS)) {
 		if (cp->relocs) {
-			o->relocs = cp->relocs (binfile);
-			REBASE_PADDR (o, o->relocs, RBinReloc);
+			RList *l = cp->relocs (binfile);
+			if (l) {
+				REBASE_PADDR (o, l, RBinReloc);
+				o->relocs = list2rbtree (l);
+				l->free = NULL;
+				r_list_free (l);
+			}
 		}
 	}
 	if (bin->filter_rules & R_BIN_REQ_STRINGS) {
@@ -418,6 +452,28 @@ R_API int r_bin_object_set_items(RBinFile *binfile, RBinObject *o) {
 	}
 	binfile->o = old_o;
 	return true;
+}
+
+R_IPI RBNode *r_bin_object_patch_relocs(RBin *bin, RBinObject *o) {
+	r_return_val_if_fail (bin && o, NULL);
+
+	static bool first = true;
+	// r_bin_object_set_items set o->relocs but there we don't have access
+	// to io
+	// so we need to be run from bin_relocs, free the previous reloc and get
+	// the patched ones
+	if (first && o->plugin && o->plugin->patch_relocs) {
+		RList *tmp = o->plugin->patch_relocs (bin);
+		first = false;
+		if (!tmp) {
+			return o->relocs;
+		}
+		r_rbtree_free (o->relocs, reloc_free);
+		REBASE_PADDR (o, tmp, RBinReloc);
+		o->relocs = list2rbtree (tmp);
+		first = false;
+	}
+	return o->relocs;
 }
 
 R_IPI RBinObject *r_bin_object_get_cur(RBin *bin) {

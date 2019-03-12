@@ -62,6 +62,8 @@ R_LIB_VERSION_HEADER (r_bin);
 #define R_BIN_REQ_RESOURCES 0x8000000
 #define R_BIN_REQ_INITFINI 0x10000000
 #define R_BIN_REQ_SEGMENTS 0x20000000
+#define R_BIN_REQ_HASHES 0x40000000
+#define R_BIN_REQ_SIGNATURE 0x80000000
 
 /* RBinSymbol->method_flags : */
 #define R_BIN_METH_CLASS 0x0000000000000001L
@@ -110,6 +112,7 @@ R_LIB_VERSION_HEADER (r_bin);
 #define R_BIN_TYPE_HIOS_STR "HIOS"
 #define R_BIN_TYPE_LOPROC_STR "LOPROC"
 #define R_BIN_TYPE_HIPROC_STR "HIPROC"
+#define R_BIN_TYPE_SPECIAL_SYM_STR "SPECIAL_SYM"
 #define R_BIN_TYPE_UNKNOWN_STR "UNK"
 
 enum {
@@ -195,6 +198,7 @@ typedef struct r_bin_info_t {
 	char *guid;
 	char *debug_file_name;
 	const char *lang;
+	char *hashes;
 	int bits;
 	int has_va;
 	int has_pi; // pic/pie
@@ -229,7 +233,7 @@ typedef struct r_bin_object_t {
 	RList/*<??>*/ *entries;
 	RList/*<??>*/ *fields;
 	RList/*<??>*/ *libs;
-	RList/*<RBinReloc>*/ *relocs;
+	RBNode/*<RBinReloc>*/ *relocs;
 	RList/*<??>*/ *strings;
 	RList/*<RBinClass>*/ *classes;
 	RList/*<RBinDwarfRow>*/ *lines;
@@ -274,7 +278,7 @@ typedef struct r_bin_file_t {
 	struct r_bin_t *rbin;
 } RBinFile;
 
-typedef struct RBinFileOptions {
+typedef struct r_bin_file_options_t {
 	int rawstr;
 	ut64 baddr; // base address
 	ut64 laddr; // load address
@@ -330,7 +334,7 @@ typedef struct r_bin_xtr_metadata_t {
 typedef int (*FREE_XTR)(void *xtr_obj);
 typedef struct r_bin_xtr_extract_t {
 	char *file;
-	ut8 *buffer;
+	RBuffer *buf;
 	ut64 size;
 	ut64 offset;
 	ut64 baddr;
@@ -525,6 +529,7 @@ typedef struct r_bin_reloc_t {
 	 * cf. https://gcc.gnu.org/onlinedocs/gcc/Common-Function-Attributes.html
 	 */
 	bool is_ifunc;
+	RBNode vrb;
 } RBinReloc;
 
 typedef struct r_bin_string_t {
@@ -651,8 +656,10 @@ R_API RList *r_bin_get_entries(RBin *bin);
 R_API RList *r_bin_get_fields(RBin *bin);
 R_API RList *r_bin_get_imports(RBin *bin);
 R_API RList *r_bin_get_libs(RBin *bin);
-R_API RList *r_bin_patch_relocs(RBin *bin);
-R_API RList *r_bin_get_relocs(RBin *bin);
+R_API RBNode *r_bin_patch_relocs(RBin *bin);
+R_API RList *r_bin_patch_relocs_list(RBin *bin);
+R_API RBNode *r_bin_get_relocs(RBin *bin);
+R_API RList *r_bin_get_relocs_list(RBin *bin);
 R_API RList *r_bin_get_sections(RBin *bin);
 R_API RList *r_bin_get_classes(RBin *bin);
 R_API RList *r_bin_get_strings(RBin *bin);
@@ -682,6 +689,7 @@ R_API const char *r_bin_entry_type_string(int etype);
 // binfile functions
 R_API bool r_bin_file_object_new_from_xtr_data(RBin *bin, RBinFile *bf, ut64 baseaddr, ut64 loadaddr, RBinXtrData *data);
 R_API RBinFile *r_bin_file_find_by_arch_bits(RBin *bin, const char *arch, int bits);
+R_API RBinFile *r_bin_file_find_by_id(RBin *bin, ut32 bin_id);
 R_API RBinFile *r_bin_file_find_by_fd(RBin *bin, ut32 bin_fd);
 R_API RBinFile *r_bin_file_find_by_name(RBin *bin, const char *name);
 R_API bool r_bin_file_set_cur_binfile(RBin *bin, RBinFile *bf);
@@ -689,9 +697,12 @@ R_API bool r_bin_file_set_cur_by_name(RBin *bin, const char *name);
 R_API void r_bin_file_free(void /*RBinFile*/ *bf_);
 R_API bool r_bin_file_deref(RBin *bin, RBinFile *a);
 R_API bool r_bin_file_set_cur_by_fd(RBin *bin, ut32 bin_fd);
+R_API bool r_bin_file_set_cur_by_id(RBin *bin, ut32 bin_id);
+R_API bool r_bin_file_set_cur_by_name(RBin *bin, const char *name);
 R_API bool r_bin_file_close(RBin *bin, int bd);
 R_API int r_bin_file_delete_all(RBin *bin);
 R_API int r_bin_file_delete(RBin *bin, ut32 bin_fd);
+R_API bool r_bin_file_hash(RBin *bin, ut64 limit, const char *file);
 
 // binobject functions
 R_API int r_bin_object_set_items(RBinFile *binfile, RBinObject *o);
@@ -769,7 +780,7 @@ extern RBinPlugin r_bin_plugin_xbe;
 extern RBinPlugin r_bin_plugin_bflt;
 extern RBinXtrPlugin r_bin_xtr_plugin_xtr_fatmach0;
 extern RBinXtrPlugin r_bin_xtr_plugin_xtr_dyldcache;
-extern RBinXtrPlugin r_bin_xtr_plugin_xtr_pemixed; 
+extern RBinXtrPlugin r_bin_xtr_plugin_xtr_pemixed;
 extern RBinLdrPlugin r_bin_ldr_plugin_ldr_linux;
 extern RBinPlugin r_bin_plugin_zimg;
 extern RBinPlugin r_bin_plugin_omf;
@@ -777,6 +788,7 @@ extern RBinPlugin r_bin_plugin_art;
 extern RBinPlugin r_bin_plugin_bootimg;
 extern RBinPlugin r_bin_plugin_dol;
 extern RBinPlugin r_bin_plugin_nes;
+extern RBinPlugin r_bin_plugin_qnx;
 extern RBinPlugin r_bin_plugin_mbn;
 extern RBinPlugin r_bin_plugin_smd;
 extern RBinPlugin r_bin_plugin_sms;
@@ -784,6 +796,7 @@ extern RBinPlugin r_bin_plugin_psxexe;
 extern RBinPlugin r_bin_plugin_spc700;
 extern RBinPlugin r_bin_plugin_vsf;
 extern RBinPlugin r_bin_plugin_dyldcache;
+extern RBinPlugin r_bin_plugin_xnu_kernelcache;
 extern RBinPlugin r_bin_plugin_avr;
 extern RBinPlugin r_bin_plugin_menuet;
 extern RBinPlugin r_bin_plugin_wasm;

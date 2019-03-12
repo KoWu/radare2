@@ -1,4 +1,4 @@
-files = [
+r_cons_sources = [
   '2048.c',
   'canvas.c',
   'canvas_line.c',
@@ -19,7 +19,7 @@ files = [
   'utf8.c'
 ]
 
-r_cons = library('r_cons', files,
+r_cons = library('r_cons', r_cons_sources,
   include_directories: [platform_inc],
   c_args: library_cflags,
   dependencies: [r_util_dep, sdb_dep],
@@ -31,8 +31,7 @@ r_cons = library('r_cons', files,
 r_cons_dep = declare_dependency(link_with: r_cons,
                                 include_directories: [platform_inc])
 
-pkgconfig_mod.generate(
-  libraries: [r_cons],
+pkgconfig_mod.generate(r_cons,
   subdirs: 'libr',
   version: r2_version,
   name: 'r_cons',

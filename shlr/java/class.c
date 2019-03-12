@@ -547,7 +547,6 @@ R_API char *r_bin_java_unmangle_method(const char *flags, const char *name, cons
 		r_val_str = strdup ("UNKNOWN");
 	}
 	f_val_str = strdup (flags ? flags : "");
-	params_idx = 0;
 	r_list_foreach (the_list, iter, str) {
 		params_len += strlen (str);
 		if (params_idx > 0) {
@@ -559,7 +558,6 @@ R_API char *r_bin_java_unmangle_method(const char *flags, const char *name, cons
 		ut32 offset = 0;
 		params_len += 1;
 		p_val_str = malloc (params_len);
-		params_idx = 0;
 		r_list_foreach (the_list, iter, str) {
 			if (offset != 0) {
 				offset += snprintf (p_val_str + offset, params_len - offset, ", %s", str);
@@ -927,7 +925,7 @@ R_API int r_bin_java_extract_reference_name(const char *input_str, char **ref_st
 	str_len += len;
 	*ref_str = malloc (str_len + 1);
 	new_str = *ref_str;
-	memcpy (new_str, input_str + 1, str_len);
+	memcpy (new_str, str_pos, str_len);
 	new_str[str_len] = 0;
 	while (*new_str) {
 		if (*new_str == '/') {
@@ -970,60 +968,57 @@ R_API int extract_type_value(const char *arg_str, char **output) {
 		R_FREE (*output);
 	}
 	while (arg_str && *arg_str && !found_one) {
-		len = 0;
+		len = 1;
 		// handle the end of an object
 		switch (*arg_str) {
 		case 'V':
-			len = 1;
 			str = get_type_value_str ("void", array_cnt);
 			break;
 		case 'J':
-			len = 1;
 			str = get_type_value_str ("long", array_cnt);
 			array_cnt = 0;
 			break;
 		case 'I':
-			len = 1;
 			str = get_type_value_str ("int", array_cnt);
 			array_cnt = 0;
 			break;
 		case 'D':
-			len = 1;
 			str = get_type_value_str ("double", array_cnt);
 			array_cnt = 0;
 			break;
 		case 'F':
-			len = 1;
 			str = get_type_value_str ("float", array_cnt);
 			array_cnt = 0;
 			break;
 		case 'B':
-			len = 1;
 			str = get_type_value_str ("byte", array_cnt);
 			array_cnt = 0;
 			break;
 		case 'C':
-			len = 1;
 			str = get_type_value_str ("char", array_cnt);
 			array_cnt = 0;
 			break;
 		case 'Z':
-			len = 1;
 			str = get_type_value_str ("boolean", array_cnt);
 			array_cnt = 0;
 			break;
 		case 'S':
-			len = 1;
 			str = get_type_value_str ("short", array_cnt);
 			array_cnt = 0;
 			break;
-		case '[': len = 1; array_cnt++; break;
+		case '[':
+			array_cnt++;
+			break;
 		case 'L':
 			len = r_bin_java_extract_reference_name (arg_str, &str, array_cnt);
 			array_cnt = 0;
 			break;
-		case '(': len = 1; str = strdup ("("); break;
-		case ')': len = 1; str = strdup (")"); break;
+		case '(':
+			str = strdup ("(");
+			break;
+		case ')':
+			str = strdup (")");
+			break;
 		default:
 			return 0;
 		}
@@ -1101,7 +1096,7 @@ R_API RList *r_bin_java_get_args(RBinJavaField *fm_type) {
 		if (str && *str == ')') {
 			break;
 		}
-		if (in_args) {
+		if (in_args && str) {
 			r_list_append (arg_list, strdup (str));
 		}
 	}
@@ -1524,6 +1519,8 @@ R_API RBinJavaField *r_bin_java_read_next_field(RBinJavaObj *bin, const ut64 off
 			attr = r_bin_java_read_next_attr (bin, offset + adv, buffer, len);
 			if (!attr) {
 				eprintf ("[X] r_bin_java: Error unable to parse remainder of classfile after Field Attribute: %d.\n", i);
+				free (field->metas);
+				free (field);
 				return NULL;
 			}
 			if ((r_bin_java_get_attr_type_by_name (attr->name))->type == R_BIN_JAVA_ATTR_TYPE_CODE_ATTR) {
@@ -1538,6 +1535,7 @@ R_API RBinJavaField *r_bin_java_read_next_field(RBinJavaObj *bin, const ut64 off
 			adv += attr->size;
 			if (adv + offset >= len) {
 				eprintf ("[X] r_bin_java: Error unable to parse remainder of classfile after Field Attribute: %d.\n", i);
+				r_bin_java_fmtype_free (field);
 				return NULL;
 			}
 		}
@@ -2049,6 +2047,7 @@ R_API RBinJavaAttrInfo *r_bin_java_read_next_attr(RBinJavaObj *bin, const ut64 o
 		}
 		attr->size = sz;
 	} else {
+		free (buffer);
 		eprintf ("IS OOB\n");
 	}
 	return attr;
@@ -3450,7 +3449,6 @@ R_API RBinJavaAttrInfo *r_bin_java_code_attr_new(ut8 *buffer, ut64 sz, ut64 buf_
 		int len = attr->info.code_attr.code_length;
 		memset (attr->info.code_attr.code, 0, len);
 		if (offset + len >= sz) {
-			len = sz;
 			return attr;
 		}
 		memcpy (attr->info.code_attr.code, buffer + offset, len);
@@ -3735,6 +3733,7 @@ R_API RBinJavaAttrInfo *r_bin_java_inner_classes_attr_new(ut8 *buffer, ut64 sz, 
 			if (!icattr->name) {
 				icattr->name = r_str_dup (NULL, "NULL");
 				eprintf ("r_bin_java_inner_classes_attr: Unable to find the name for %d index.\n", icattr->inner_name_idx);
+				free (icattr);
 				break;
 			}
 		}
@@ -3779,6 +3778,9 @@ R_API RBinJavaAttrInfo *r_bin_java_line_number_table_attr_new(ut8 *buffer, ut64 
 	ut32 i = 0;
 	ut64 curpos, offset = 0;
 	RBinJavaLineNumberAttribute *lnattr;
+	if (sz < 6) {
+		return NULL;
+	}
 	RBinJavaAttrInfo *attr = r_bin_java_default_attr_new (buffer, sz, buf_offset);
 	if (!attr) {
 		return NULL;
@@ -3801,6 +3803,7 @@ R_API RBinJavaAttrInfo *r_bin_java_line_number_table_attr_new(ut8 *buffer, ut64 
 		}
 		// wtf it works
 		if (offset - 2 > sz) {
+			R_FREE (lnattr);
 			break;
 		}
 		lnattr->start_pc = R_BIN_JAVA_USHORT (buffer, offset);
@@ -4157,7 +4160,7 @@ R_API RBinJavaStackMapFrameMetas *r_bin_java_determine_stack_frame_type(ut8 tag)
 	ut8 type_value = 0;
 	if (tag < 64) {
 		type_value = R_BIN_JAVA_STACK_FRAME_SAME;
-	} else if (63 < tag && tag < 128) {
+	} else if (tag < 128) {
 		type_value = R_BIN_JAVA_STACK_FRAME_SAME_LOCALS_1;
 	} else if (247 < tag && tag < 251) {
 		type_value = R_BIN_JAVA_STACK_FRAME_CHOP;
@@ -5029,7 +5032,6 @@ R_API int r_bin_java_check_reset_cp_obj(RBinJavaCPTypeObj *cp_obj, ut8 tag) {
 				R_FREE (cp_obj->info.cp_utf8.bytes);
 				cp_obj->info.cp_utf8.length = 0;
 				R_FREE (cp_obj->name);
-				res = true;
 			}
 			cp_obj->tag = tag;
 			cp_obj->metas->type_info = (void *) &R_BIN_JAVA_CP_METAS[tag];
@@ -5711,7 +5713,7 @@ R_API char *r_bin_java_print_interfacemethodref_cp_stringify(RBinJavaCPTypeObj *
 			value = malloc (size);
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d.%d",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d.%d",
 					obj->metas->ord, obj->file_offset + obj->loadaddr, ((RBinJavaCPTypeMetas *) obj->metas->type_info)->name,
 					obj->info.cp_interface.class_idx, obj->info.cp_interface.name_and_type_idx);
 			}
@@ -5748,7 +5750,7 @@ R_API char *r_bin_java_print_methodhandle_cp_stringify(RBinJavaCPTypeObj *obj) {
 			value = malloc (size);
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%s.%d",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%s.%d",
 					obj->metas->ord, obj->file_offset + obj->loadaddr, ((RBinJavaCPTypeMetas *) obj->metas->type_info)->name,
 					R_BIN_JAVA_REF_METAS[ref_kind].name, obj->info.cp_method_handle.reference_index);
 			}
@@ -5781,7 +5783,7 @@ R_API char *r_bin_java_print_methodtype_cp_stringify(RBinJavaCPTypeObj *obj) {
 			value = malloc (size);
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d",
 					obj->metas->ord, obj->file_offset + obj->loadaddr, ((RBinJavaCPTypeMetas *) obj->metas->type_info)->name,
 					obj->info.cp_method_type.descriptor_index);
 			}
@@ -5816,7 +5818,7 @@ R_API char *r_bin_java_print_invokedynamic_cp_stringify(RBinJavaCPTypeObj *obj) 
 			value = malloc (size);
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d.%d",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d.%d",
 					obj->metas->ord, obj->file_offset + obj->loadaddr, ((RBinJavaCPTypeMetas *) obj->metas->type_info)->name,
 					obj->info.cp_invoke_dynamic.bootstrap_method_attr_index,
 					obj->info.cp_invoke_dynamic.name_and_type_index);
@@ -5852,7 +5854,7 @@ R_API char *r_bin_java_print_methodref_cp_stringify(RBinJavaCPTypeObj *obj) {
 			value = malloc (size);
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d.%d",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d.%d",
 					obj->metas->ord, obj->file_offset + obj->loadaddr, ((RBinJavaCPTypeMetas *) obj->metas->type_info)->name,
 					obj->info.cp_method.class_idx,
 					obj->info.cp_method.name_and_type_idx);
@@ -5888,7 +5890,7 @@ R_API char *r_bin_java_print_fieldref_cp_stringify(RBinJavaCPTypeObj *obj) {
 			value = malloc (size);
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d.%d",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d.%d",
 					obj->metas->ord, obj->file_offset + obj->loadaddr, ((RBinJavaCPTypeMetas *) obj->metas->type_info)->name,
 					obj->info.cp_field.class_idx,
 					obj->info.cp_field.name_and_type_idx);
@@ -5922,7 +5924,7 @@ R_API char *r_bin_java_print_classref_cp_stringify(RBinJavaCPTypeObj *obj) {
 			value = malloc (size);
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d",
 					obj->metas->ord, obj->file_offset + obj->loadaddr, ((RBinJavaCPTypeMetas *) obj->metas->type_info)->name,
 					obj->info.cp_class.name_idx);
 			}
@@ -5955,7 +5957,7 @@ R_API char *r_bin_java_print_string_cp_stringify(RBinJavaCPTypeObj *obj) {
 			value = malloc (size);
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d",
 					obj->metas->ord, obj->file_offset,
 					((RBinJavaCPTypeMetas *) obj->metas->type_info)->name,
 					obj->info.cp_string.string_idx);
@@ -5992,7 +5994,7 @@ R_API char *r_bin_java_print_integer_cp_stringify(RBinJavaCPTypeObj *obj) {
 			value = malloc (size);
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s.0x%08x",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s.0x%08x",
 					obj->metas->ord, obj->file_offset + obj->loadaddr, ((RBinJavaCPTypeMetas *) obj->metas->type_info)->name,
 					R_BIN_JAVA_UINT (obj->info.cp_integer.bytes.raw, 0));
 			}
@@ -6028,7 +6030,7 @@ R_API char *r_bin_java_print_float_cp_stringify(RBinJavaCPTypeObj *obj) {
 			value = malloc (size);
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%f",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%f",
 					obj->metas->ord, obj->file_offset + obj->loadaddr, ((RBinJavaCPTypeMetas *) obj->metas->type_info)->name,
 					R_BIN_JAVA_FLOAT (obj->info.cp_float.bytes.raw, 0));
 			}
@@ -6067,7 +6069,7 @@ R_API char *r_bin_java_print_long_cp_stringify(RBinJavaCPTypeObj *obj) {
 			value = malloc (size);
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s.0x%08"PFMT64x "",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s.0x%08"PFMT64x "",
 					obj->metas->ord,
 					obj->file_offset,
 					((RBinJavaCPTypeMetas *) obj->metas->type_info)->name,
@@ -6108,7 +6110,7 @@ R_API char *r_bin_java_print_double_cp_stringify(RBinJavaCPTypeObj *obj) {
 			value = malloc (size);
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%f",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%f",
 					obj->metas->ord,
 					obj->file_offset,
 					((RBinJavaCPTypeMetas *) obj->metas->type_info)->name,
@@ -6145,7 +6147,7 @@ R_API char *r_bin_java_print_name_and_type_cp_stringify(RBinJavaCPTypeObj *obj) 
 			value = malloc (size);
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d.%d",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d.%d",
 					obj->metas->ord, obj->file_offset + obj->loadaddr, ((RBinJavaCPTypeMetas *) obj->metas->type_info)->name,
 					obj->info.cp_name_and_type.name_idx,
 					obj->info.cp_name_and_type.descriptor_idx);
@@ -6184,7 +6186,7 @@ R_API char *r_bin_java_print_utf8_cp_stringify(RBinJavaCPTypeObj *obj) {
 			value = malloc (size + strlen (utf8_str));
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d.%s",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s.%d.%s",
 					obj->metas->ord, obj->file_offset + obj->loadaddr, ((RBinJavaCPTypeMetas *) obj->metas->type_info)->name,
 					obj->info.cp_utf8.length,
 					utf8_str);
@@ -6212,7 +6214,7 @@ R_API char *r_bin_java_print_null_cp_stringify(RBinJavaCPTypeObj *obj) {
 			value = malloc (size);
 			if (value) {
 				memset (value, 0, size);
-				consumed = snprintf (value, size, "%d.0x%04"PFMT64x ".%s",
+				(void)snprintf (value, size, "%d.0x%04"PFMT64x ".%s",
 					obj->metas->ord, obj->file_offset,
 					((RBinJavaCPTypeMetas *) obj->metas->type_info)->name);
 			}
@@ -6387,7 +6389,12 @@ R_API void r_bin_java_element_value_free(void /*RBinJavaElementValue*/ *e) {
 		case R_BIN_JAVA_EV_TAG_ENUM:
 			// Delete the CP Type Objects
 			obj = element_value->value.enum_const_value.const_name_cp_obj;
-			((RBinJavaCPTypeMetas *) obj->metas->type_info)->allocs->delete_obj (obj);
+			if (obj && obj->metas) {
+				RBinJavaCPTypeMetas *ti = obj->metas->type_info;
+				if (ti && ti->allocs && ti->allocs->delete_obj) {
+					ti->allocs->delete_obj (obj);
+				}
+			}
 			obj = element_value->value.enum_const_value.type_name_cp_obj;
 			if (obj && obj->metas) {
 				RBinJavaCPTypeMetas *tm = obj->metas->type_info;
@@ -6712,7 +6719,6 @@ R_API RBinJavaElementValue *r_bin_java_element_value_new(ut8 *buffer, ut64 sz, u
 		// (ut16) read and set const_value.const_value_idx
 		element_value->value.const_value.const_value_idx = R_BIN_JAVA_USHORT (buffer, offset);
 		element_value->size += 2;
-		offset += 2;
 		// look-up, deep copy, and set const_value.const_value_cp_obj
 		element_value->value.const_value.const_value_cp_obj = r_bin_java_clone_cp_idx (R_BIN_JAVA_GLOBAL_BIN, element_value->value.const_value.const_value_idx);
 		break;
@@ -7450,11 +7456,9 @@ R_API char *r_bin_java_resolve(RBinJavaObj *BIN_OBJ, int idx, ut8 space_bn_name_
 		}
 		return str;
 	}
-	cp_name = ((RBinJavaCPTypeMetas *) item->metas->type_info)->name;
 	if (strcmp (cp_name, "Class") == 0) {
 		item2 = (RBinJavaCPTypeObj *) r_bin_java_get_item_from_bin_cp_list (BIN_OBJ, idx);
 		// str = r_bin_java_get_name_from_bin_cp_list (BIN_OBJ, idx-1);
-		class_str = empty;
 		class_str = r_bin_java_get_item_name_from_bin_cp_list (BIN_OBJ, item);
 		if (!class_str) {
 			class_str = empty;
@@ -8277,11 +8281,9 @@ R_API char *r_bin_java_resolve_b64_encode(RBinJavaObj *BIN_OBJ, ut16 idx) {
 	} else {
 		return NULL;
 	}
-	cp_name = ((RBinJavaCPTypeMetas *) item->metas->type_info)->name;
 	if (!strcmp (cp_name, "Class")) {
 		item2 = (RBinJavaCPTypeObj *) r_bin_java_get_item_from_bin_cp_list (BIN_OBJ, idx);
 		// str = r_bin_java_get_name_from_bin_cp_list (BIN_OBJ, idx-1);
-		class_str = empty;
 		class_str = r_bin_java_get_item_name_from_bin_cp_list (BIN_OBJ, item);
 		if (!class_str) {
 			class_str = empty;
@@ -8297,12 +8299,12 @@ R_API char *r_bin_java_resolve_b64_encode(RBinJavaObj *BIN_OBJ, ut16 idx) {
 		memory_alloc = strlen (class_str) + strlen (name_str) + strlen (desc_str) + 3;
 		if (memory_alloc) {
 			str = malloc (memory_alloc);
-			snprintf (str, memory_alloc, "%s%s", name_str, desc_str);
-			out = (char *) malloc (memory_alloc);
-			memset (out, 0, memory_alloc);
-			r_base64_encode (out, (const ut8 *) str, strlen (str));
-			free (str);
-			str = out;
+			if (str) {
+				snprintf (str, memory_alloc, "%s%s", name_str, desc_str);
+				out = r_base64_encode_dyn ((const char *) str, strlen (str));
+				free (str);
+				str = out;
+			}
 		}
 		if (class_str != empty) {
 			free (class_str);
@@ -8334,12 +8336,12 @@ R_API char *r_bin_java_resolve_b64_encode(RBinJavaObj *BIN_OBJ, ut16 idx) {
 		memory_alloc = strlen (class_str) + strlen (name_str) + strlen (desc_str) + 3;
 		if (memory_alloc) {
 			str = malloc (memory_alloc);
-			snprintf (str, memory_alloc, "%s/%s%s", class_str, name_str, desc_str);
-			out = malloc (memory_alloc);
-			memset (out, 0, memory_alloc);
-			r_base64_encode (out, (const ut8 *) str, strlen (str));
-			free (str);
-			str = out;
+			if (str) {
+				snprintf (str, memory_alloc, "%s/%s%s", class_str, name_str, desc_str);
+				out = r_base64_encode_dyn ((const char *) str, strlen (str));
+				free (str);
+				str = out;
+			}
 		}
 		if (class_str != empty) {
 			free (class_str);
@@ -8362,12 +8364,12 @@ R_API char *r_bin_java_resolve_b64_encode(RBinJavaObj *BIN_OBJ, ut16 idx) {
 		memory_alloc = length + 3;
 		if (memory_alloc) {
 			str = malloc (memory_alloc);
-			snprintf (str, memory_alloc, "\"%s\"", string_str);
-			out = malloc (memory_alloc);
-			memset (out, 0, memory_alloc);
-			r_base64_encode (out, (const ut8 *) str, strlen (str));
-			free (str);
-			str = out;
+			if (str) {
+				snprintf (str, memory_alloc, "\"%s\"", string_str);
+				out = r_base64_encode_dyn ((const char *) str, strlen (str));
+				free (str);
+				str = out;
+			}
 		}
 		IFDBG eprintf("java_resolve String return: %s\n", str);
 		if (string_str != empty) {
@@ -8382,40 +8384,33 @@ R_API char *r_bin_java_resolve_b64_encode(RBinJavaObj *BIN_OBJ, ut16 idx) {
 		}
 	} else if (strcmp (cp_name, "Long") == 0) {
 		str = malloc (34);
-		out = malloc (34);
-		memset (out, 0, 34);
 		if (str) {
 			snprintf (str, 34, "0x%"PFMT64x, r_bin_java_raw_to_long (item->info.cp_long.bytes.raw, 0));
-			r_base64_encode (out, (const ut8 *) str, strlen (str));
+			out = r_base64_encode_dyn ((const char *) str, strlen (str));
 			free (str);
 			str = out;
 		}
 	} else if (strcmp (cp_name, "Double") == 0) {
 		str = malloc (1000);
-		out = malloc (1000);
-		memset (out, 0, 1000);
 		if (str) {
 			snprintf (str, 1000, "%f", r_bin_java_raw_to_double (item->info.cp_double.bytes.raw, 0));
-			r_base64_encode (out, (const ut8 *) str, strlen (str));
+			out = r_base64_encode_dyn ((const char *) str, strlen (str));
 			free (str);
 			str = out;
 		}
 	} else if (strcmp (cp_name, "Integer") == 0) {
 		str = calloc (34, 1);
-		out = calloc (34, 1);
 		if (str) {
 			snprintf (str, 34, "0x%08x", R_BIN_JAVA_UINT (item->info.cp_integer.bytes.raw, 0));
-			r_base64_encode (out, (const ut8 *) str, strlen (str));
+			out = r_base64_encode_dyn ((const char *) str, strlen (str));
 			free (str);
 			str = out;
 		}
 	} else if (strcmp (cp_name, "Float") == 0) {
 		str = malloc (34);
-		out = malloc (34);
-		memset (out, 0, 34);
 		if (str) {
 			snprintf (str, 34, "%f", R_BIN_JAVA_FLOAT (item->info.cp_float.bytes.raw, 0));
-			r_base64_encode (out, (const ut8 *) str, strlen (str));
+			out = r_base64_encode_dyn ((const char *) str, strlen (str));
 			free (str);
 			str = out;
 		}
@@ -8431,12 +8426,12 @@ R_API char *r_bin_java_resolve_b64_encode(RBinJavaObj *BIN_OBJ, ut16 idx) {
 		memory_alloc = strlen (name_str) + strlen (desc_str) + 3;
 		if (memory_alloc) {
 			str = malloc (memory_alloc);
-			snprintf (str, memory_alloc, "%s %s", name_str, desc_str);
-			out = malloc (memory_alloc);
-			memset (out, 0, memory_alloc);
-			r_base64_encode (out, (const ut8 *) str, strlen (str));
-			free (str);
-			str = out;
+			if (str) {
+				snprintf (str, memory_alloc, "%s %s", name_str, desc_str);
+				out = r_base64_encode_dyn ((const char *) str, strlen (str));
+				free (str);
+				str = out;
+			}
 		}
 		if (name_str != empty) {
 			free (name_str);
@@ -8445,11 +8440,7 @@ R_API char *r_bin_java_resolve_b64_encode(RBinJavaObj *BIN_OBJ, ut16 idx) {
 			free (desc_str);
 		}
 	} else {
-		str = malloc (16);
-		memset (str, 0, 16);
-		if (str) {
-			r_base64_encode (str, (const ut8 *) "(null)", 6);
-		}
+		str = r_base64_encode_dyn ((const char *) "(null)", 6);
 	}
 	return str;
 }
@@ -8517,17 +8508,14 @@ R_API ConstJavaValue *U(r_bin_java_resolve_to_const_value)(RBinJavaObj * BIN_OBJ
 		return result;
 	}
 	item = (RBinJavaCPTypeObj *) r_bin_java_get_item_from_bin_cp_list (BIN_OBJ, idx);
-	if (item) {
-		cp_name = ((RBinJavaCPTypeMetas *) item->metas->type_info)->name;
-		IFDBG eprintf("java_resolve Resolved: (%d) %s\n", idx, cp_name);
-	} else {
+	if (!item) {
 		return result;
 	}
 	cp_name = ((RBinJavaCPTypeMetas *) item->metas->type_info)->name;
+	IFDBG eprintf("java_resolve Resolved: (%d) %s\n", idx, cp_name);
 	if (strcmp (cp_name, "Class") == 0) {
 		item2 = (RBinJavaCPTypeObj *) r_bin_java_get_item_from_bin_cp_list (BIN_OBJ, idx);
 		// str = r_bin_java_get_name_from_bin_cp_list (BIN_OBJ, idx-1);
-		class_str = empty;
 		class_str = r_bin_java_get_item_name_from_bin_cp_list (BIN_OBJ, item);
 		if (!class_str) {
 			class_str = empty;

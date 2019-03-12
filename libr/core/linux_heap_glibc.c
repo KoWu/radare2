@@ -99,12 +99,12 @@ static void GH(get_brks)(RCore *core, GHT *brk_start, GHT *brk_end) {
 			}
 		}
 	} else {
-		RIOSection *section;
+		RIOMap *map;
 		SdbListIter *iter;
-		ls_foreach (core->io->sections, iter, section) {
-			if (strstr (section->name, "[heap]")) {
-				*brk_start = section->vaddr;
-				*brk_end = section->vaddr + section->size;
+		ls_foreach (core->io->maps, iter, map) {
+			if (strstr (map->name, "[heap]")) {
+				*brk_start = map->itv.addr;
+				*brk_end = map->itv.addr + map->itv.size;
 				break;
 			}
 		}
@@ -269,17 +269,7 @@ static bool GH(r_resolve_main_arena)(RCore *core, GHT *m_arena) {
 	GHT libc_addr_sta = GHT_MAX, libc_addr_end = 0;
 	GHT addr_srch = GHT_MAX, heap_sz = GHT_MAX;
 
-	if (!r_config_get_i (core->config, "cfg.debug")) {
-		RIOSection *section;
-		SdbListIter *iter;
-		ls_foreach (core->io->sections, iter, section) {
-			if (strstr (section->name, "arena")) {
-				libc_addr_sta = section->vaddr;
-				libc_addr_end = section->vaddr + section->vsize;
-				break;
-			}
-		}
-	} else {
+	if (r_config_get_i (core->config, "cfg.debug")) {
 		RListIter *iter;
 		RDebugMap *map;
 		r_debug_map_sync (core->dbg);
@@ -287,6 +277,16 @@ static bool GH(r_resolve_main_arena)(RCore *core, GHT *m_arena) {
 			if (strstr (map->name, "/libc-") && map->perm == 6) {
 				libc_addr_sta = map->addr;
 				libc_addr_end = map->addr_end;
+				break;
+			}
+		}
+	} else {
+		RIOMap *map;
+		SdbListIter *iter;
+		ls_foreach (core->io->maps, iter, map) {
+			if (strstr (map->name, "arena")) {
+				libc_addr_sta = map->itv.addr;
+				libc_addr_end = map->itv.addr + map->itv.size;
 				break;
 			}
 		}
@@ -891,7 +891,7 @@ static void GH(print_heap_segment)(RCore *core, MallocState *main_arena,
 		free (cnk);
 		free (cnk_next);
 		r_cons_canvas_free (can);
-		r_config_restore (hc);
+		r_config_hold_restore (hc);
 		r_config_hold_free (hc);
 		return;
 	}
@@ -1010,7 +1010,7 @@ static void GH(print_heap_segment)(RCore *core, MallocState *main_arena,
 			GH(RHeapTcache) *tcache_heap = R_NEW0 (GH(RHeapTcache));
 			if (!tcache_heap) {
 				r_cons_canvas_free (can);
-				r_config_restore (hc);
+				r_config_hold_restore (hc);
 				r_config_hold_free (hc);
 				free (g);
 				free (cnk);
@@ -1130,7 +1130,7 @@ static void GH(print_heap_segment)(RCore *core, MallocState *main_arena,
 		}
 		r_agraph_print (g);
 		r_cons_canvas_free (can);
-		r_config_restore (hc);
+		r_config_hold_restore (hc);
 		r_config_hold_free (hc);
 		break;
 	}

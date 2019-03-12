@@ -42,7 +42,7 @@ static void cmd_project_init(RCore *core) {
 
 static int cmd_project(void *data, const char *input) {
 	RCore *core = (RCore *) data;
-	const char *file, *arg = (input && *input)? input + 1: NULL;
+	const char *file, *arg;
 	const char *fileproject = r_config_get (core->config, "prj.name");
 	char *str = NULL;
 
@@ -73,7 +73,7 @@ static int cmd_project(void *data, const char *input) {
 	case 'o':
 		//	if (r_file_is_regular (file))
 		if (input[1] == '&') {
-			r_core_project_open (core, file, true);
+			r_core_cmdf (core, "& Po %s", file);
 		} else if (input[1]) {
 			r_core_project_open (core, file, false);
 		} else {

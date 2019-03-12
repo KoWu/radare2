@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2018 - pancake */
+/* radare - LGPL - Copyright 2009-2019 - pancake */
 
 #include <r_userconf.h>
 #include <r_debug.h>
@@ -52,6 +52,10 @@ static int r_debug_native_reg_write (RDebug *dbg, int type, const ut8* buf, int 
 #include "native/procfs.h"
 #if __KFBSD__ || __DragonFly__
 #include <sys/user.h>
+#include <libutil.h>
+#elif __OpenBSD__
+#include <sys/proc.h>
+#include <sys/sysctl.h>
 #endif
 #include "native/procfs.h"
 
@@ -101,6 +105,7 @@ static int r_debug_native_reg_write (RDebug *dbg, int type, const ut8* buf, int 
 static int r_debug_handle_signals(RDebug *dbg) {
 #if __linux__
 	return linux_handle_signals (dbg);
+#elif __KFBSD__
 #else
 	return -1;
 #endif
@@ -164,7 +169,7 @@ static int r_debug_native_attach (RDebug *dbg, int pid) {
 	if (!dbg || pid == dbg->pid)
 		return dbg->tid;
 #endif
-#if __linux__
+#if __linux__ || __ANDROID__
 	return linux_attach (dbg, pid);
 #elif __WINDOWS__ && !__CYGWIN__
 	int ret;
@@ -209,7 +214,7 @@ static int r_debug_native_detach (RDebug *dbg, int pid) {
 #elif __BSD__
 	return ptrace (PT_DETACH, pid, NULL, 0);
 #else
-	return r_debug_ptrace (dbg, PTRACE_DETACH, pid, NULL, NULL);
+	return r_debug_ptrace (dbg, PTRACE_DETACH, pid, NULL, (r_ptrace_data_t)(size_t)0);
 #endif
 }
 
@@ -294,11 +299,92 @@ static int r_debug_native_continue(RDebug *dbg, int pid, int tid, int sig) {
 	return tid;
 #endif
 }
+
 static RDebugInfo* r_debug_native_info (RDebug *dbg, const char *arg) {
 #if __APPLE__
 	return xnu_info (dbg, arg);
 #elif __linux__
 	return linux_info (dbg, arg);
+#elif __KFBSD__
+	struct kinfo_proc *kp;
+	RDebugInfo *rdi = R_NEW0 (RDebugInfo);
+	if (!rdi) {
+		return NULL;
+	}
+
+	if (!(kp = kinfo_getproc (dbg->pid))) {
+		free (rdi);
+		return NULL;
+	}
+
+	rdi->pid = dbg->pid;
+	rdi->tid = dbg->tid;
+	rdi->uid = kp->ki_uid;
+	rdi->gid = kp->ki_pgid;
+	rdi->exe = strdup (kp->ki_comm);
+
+	switch (kp->ki_stat) {
+		case SSLEEP:
+			rdi->status = R_DBG_PROC_SLEEP;
+			break;
+		case SSTOP:
+			rdi->status = R_DBG_PROC_STOP;
+			break;
+		case SZOMB:
+			rdi->status = R_DBG_PROC_ZOMBIE;
+			break;
+		case SRUN:
+		case SIDL:
+		case SLOCK:
+		case SWAIT:
+			rdi->status = R_DBG_PROC_RUN;
+			break;
+		default:
+			rdi->status = R_DBG_PROC_DEAD;
+	}
+
+	free (kp);
+
+	return rdi;
+#elif __OpenBSD__
+	struct kinfo_proc *kp;
+	char err[_POSIX2_LINE_MAX];
+	int rc;
+	RDebugInfo *rdi = R_NEW0 (RDebugInfo);
+	if (!rdi) {
+		return NULL;
+	}
+
+	kvm_t *kd = kvm_openfiles (NULL, NULL, NULL, KVM_NO_FILES, err);
+	if (!kd) {
+		return NULL;
+	}
+
+	kp = kvm_getprocs (kd, KERN_PROC_PID, dbg->pid, sizeof (*kp), &rc);
+	if (kp) {
+		rdi->pid = dbg->pid;
+		rdi->tid = dbg->tid;
+		rdi->uid = kp->p_uid;
+		rdi->gid = kp->p__pgid;
+		rdi->exe = strdup (kp->p_comm);
+
+		rdi->status = R_DBG_PROC_STOP;
+
+		if (kp->p_psflags & PS_ZOMBIE) {
+				rdi->status = R_DBG_PROC_ZOMBIE;
+		} else if (kp->p_psflags & PS_STOPPED){
+				rdi->status = R_DBG_PROC_STOP;
+		} else if (kp->p_psflags & PS_PPWAIT) {
+				rdi->status = R_DBG_PROC_SLEEP;
+		} else if ((kp->p_psflags & PS_EXEC) || (kp->p_psflags & PS_INEXEC)) {
+				rdi->status = R_DBG_PROC_RUN;
+		}
+
+	}
+
+	kvm_close (kd);
+
+	return rdi;
 #elif __WINDOWS__
 	return w32_info (dbg, arg);
 #else
@@ -506,8 +592,43 @@ static RDebugReasonType r_debug_native_wait (RDebug *dbg, int pid) {
 			 *
 			 * this might modify dbg->reason.signum
 			 */
-#if __FreeBSD__ || __OpenBSD__ || __NetBSD__
+#if __OpenBSD__ || __NetBSD__
 			reason = R_DEBUG_REASON_BREAKPOINT;
+#elif __KFBSD__
+			// Trying to figure out a bit by the signal
+			struct ptrace_lwpinfo linfo = {0};
+			siginfo_t siginfo;
+			int ret = ptrace (PT_LWPINFO, dbg->pid, (char *)&linfo, sizeof (linfo));
+			if (ret == -1) {
+				if (errno == ESRCH) {
+					dbg->reason.type = R_DEBUG_REASON_DEAD;
+					goto reason;
+				}
+				r_sys_perror ("ptrace PTRACCE_LWPINFO");
+				return -1;
+			} else {
+				// Not stopped by the signal
+				if (linfo.pl_event == PL_EVENT_NONE) {
+					dbg->reason.type = R_DEBUG_REASON_BREAKPOINT;
+					goto reason;
+				}
+			}
+
+			siginfo = linfo.pl_siginfo;
+			dbg->reason.type = R_DEBUG_REASON_SIGNAL;
+			dbg->reason.signum = siginfo.si_signo;
+
+			switch (dbg->reason.signum) {
+				case SIGABRT:
+					dbg->reason.type = R_DEBUG_REASON_ABORT;
+					break;
+				case SIGSEGV:
+					dbg->reason.type = R_DEBUG_REASON_SEGFAULT;
+					break;
+			}
+
+reason:
+			reason = dbg->reason.type;
 #else
 			if (!r_debug_handle_signals (dbg)) {
 				return R_DEBUG_REASON_ERROR;
@@ -595,7 +716,7 @@ static RList *r_debug_native_pids (RDebug *dbg, int pid) {
 	if (!dh) {
 		r_sys_perror ("opendir /proc");
 		r_list_free (list);
-		list = NULL;
+		return NULL;
 	}
 	while ((de = readdir (dh))) {
 		uid = 0;
@@ -1489,7 +1610,7 @@ static bool arm32_hwbp_del (RDebug *dbg, RBreakpoint *bp, RBreakpointItem *b) {
 
 #if __arm64__ || __aarch64__
 // type = 2 = write
-static volatile uint8_t var[96] __attribute__((__aligned__(32)));
+//static volatile uint8_t var[96] __attribute__((__aligned__(32)));
 
 static bool ll_arm64_hwbp_set(pid_t pid, ut64 _addr, int size, int wp, ut32 type) {
 	const volatile uint8_t *addr = (void*)(size_t)_addr; //&var[32 + wp];
@@ -1527,7 +1648,7 @@ static bool ll_arm64_hwbp_set(pid_t pid, ut64 _addr, int size, int wp, ut32 type
 }
 
 static bool ll_arm64_hwbp_del(pid_t pid, ut64 _addr, int size, int wp, ut32 type) {
-	const volatile uint8_t *addr = &var[32 + wp];
+	// const volatile uint8_t *addr = &var[32 + wp];
 	// TODO: support multiple watchpoints and find
 	struct user_hwdebug_state dreg_state = {0};
 	struct iovec iov = {0};

@@ -256,12 +256,10 @@ static ut64 get_base_from_maps(RCore *core, const char *file) {
 R_API int r_core_bin_reload(RCore *r, const char *file, ut64 baseaddr) {
 	int result = 0;
 	RCoreFile *cf = r_core_file_cur (r);
-	RBinFile *bf = NULL;
 	if (cf) {
 		result = r_bin_reload (r->bin, cf->fd, baseaddr);
 	}
-	bf = r_bin_cur (r->bin);
-	r_core_bin_set_env (r, bf);
+	r_core_bin_set_env (r, r_bin_cur (r->bin));
 	return result;
 }
 
@@ -594,7 +592,9 @@ R_API bool r_core_bin_load(RCore *r, const char *filenameuri, ut64 baddr) {
 			}
 		}
 	} else {
-		r_io_map_new (r->io, desc->fd, desc->perm, 0, laddr, r_io_desc_size (desc));
+		if (desc) {
+			r_io_map_new (r->io, desc->fd, desc->perm, 0, laddr, r_io_desc_size (desc));
+		}
 		if (binfile) {
 			r_core_bin_set_arch_bits (r, binfile->file,
 					r_config_get (r->config, "asm.arch"),
@@ -684,16 +684,13 @@ beach:
 	return true;
 }
 
-R_API RCoreFile *r_core_file_open_many(RCore *r, const char *file, int flags, ut64 loadaddr) {
+R_API RCoreFile *r_core_file_open_many(RCore *r, const char *file, int perm, ut64 loadaddr) {
 	bool openmany = r_config_get_i (r->config, "file.openmany");
 	int opened_count = 0;
-	// ut64 current_loadaddr = loadaddr;
-	RCoreFile *fh; //, *top_file = NULL;
 	RListIter *fd_iter, *iter2;
-	RList *list_fds = NULL;
 	RIODesc *fd;
 
-	list_fds = r_io_open_many (r->io, file, flags, 0644);
+	RList *list_fds = r_io_open_many (r->io, file, perm, 0644);
 
 	if (!list_fds || r_list_length (list_fds) == 0) {
 		r_list_free (list_fds);
@@ -710,17 +707,14 @@ R_API RCoreFile *r_core_file_open_many(RCore *r, const char *file, int flags, ut
 			r_list_delete (list_fds, fd_iter);
 			continue;
 		}
-		fh = R_NEW0 (RCoreFile);
+		RCoreFile *fh = R_NEW0 (RCoreFile);
 		if (!fh) {
-			eprintf ("file.c:r_core_many failed to allocate new RCoreFile.\n");
 			break;
 		}
 		fh->alive = 1;
 		fh->core = r;
 		fh->fd = fd->fd;
 		r->file = fh;
-		// XXX - load addr should be at a set offset
-		//r_core_file_get_next_map (r, fh, flags, current_loadaddr);
 		r_bin_bind (r->bin, &(fh->binb));
 		r_list_append (r->files, fh);
 		r_core_bin_load (r, fd->name, 0LL);
@@ -1087,55 +1081,6 @@ R_API bool r_core_file_close_fd(RCore *core, int fd) {
 		}
 	}
 	return r_io_fd_close (core->io, fd);
-}
-
-R_API int r_core_hash_load(RCore *r, const char *file) {
-	const ut8 *md5, *sha1;
-	char hash[128], *p;
-	int i;
-	int buf_len = 0;
-	ut8 *buf = NULL;
-	RHash *ctx;
-	ut64 limit;
-	RCoreFile *cf = r_core_file_cur (r);
-	RIODesc *desc = cf ? r_io_desc_get (r->io, cf->fd) : NULL;
-	if (!file && desc) {
-		file = desc->name;
-	}
-	if (!file) {
-		return false;
-	}
-
-	limit = r_config_get_i (r->config, "cfg.hashlimit");
-	if (desc && r_io_desc_size (desc) > limit) {
-		return false;
-	}
-	buf = (ut8 *) r_file_slurp (file, &buf_len);
-	if (!buf) {
-		return false;
-	}
-	ctx = r_hash_new (true, R_HASH_MD5);
-	md5 = r_hash_do_md5 (ctx, buf, buf_len);
-	p = hash;
-	for (i = 0; i < R_HASH_SIZE_MD5; i++) {
-		sprintf (p, "%02x", md5[i]);
-		p += 2;
-	}
-	*p = 0;
-	r_config_set (r->config, "file.md5", hash);
-	r_hash_free (ctx);
-	ctx = r_hash_new (true, R_HASH_SHA1);
-	sha1 = r_hash_do_sha1 (ctx, buf, buf_len);
-	p = hash;
-	for (i = 0; i < R_HASH_SIZE_SHA1; i++) {
-		sprintf (p, "%02x", sha1[i]);
-		p += 2;
-	}
-	*p = 0;
-	r_config_set (r->config, "file.sha1", hash);
-	r_hash_free (ctx);
-	free (buf);
-	return true;
 }
 
 R_API RCoreFile *r_core_file_find_by_fd(RCore *core, ut64 fd) {
