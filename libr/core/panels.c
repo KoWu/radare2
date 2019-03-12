@@ -459,16 +459,12 @@ static void layoutDefault(RPanels *panels) {
 		p0->pos.h = h - 1;
 		return;
 	}
-	p0->pos.w = colpos / 2 + 1;
+	p0->pos.w = colpos + 1;
 	p0->pos.h = h - 1;
-	p1->pos.x = colpos / 2;
-	p1->pos.y = 1;
-	p1->pos.w = colpos / 2 + 1;
-	p1->pos.h = h - 1;
-	for (i = 2; i < panels->n_panels; i++) {
+	for (i = 1; i < panels->n_panels; i++) {
 		RPanel *p = getPanel (panels, i);
 		p->pos.x = colpos;
-		p->pos.y = 2 + (ph * (i - 2));
+		p->pos.y = 2 + (ph * (i - 1));
 		p->pos.w = w - colpos;
 		if (p->pos.w < 0) {
 			p->pos.w = 0;
@@ -3622,6 +3618,9 @@ repeat:
 			(void)r_core_cmd0 (core, cmd);
 		} else {
 			panelSingleStepIn (core);
+			if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)) {
+				cur->addr = core->offset;
+			}
 			setRefreshAll (panels, false);
 		}
 		break;
@@ -3631,6 +3630,9 @@ repeat:
 			(void)r_core_cmd0 (core, cmd);
 		} else {
 			panelSingleStepOver (core);
+			if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)) {
+				cur->addr = core->offset;
+			}
 			setRefreshAll (panels, false);
 		}
 		break;
