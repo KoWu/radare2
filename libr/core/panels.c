@@ -3267,6 +3267,8 @@ R_API int r_core_visual_panels(RCore *core, RPanels *panels) {
 		createDefaultPanels (core);
 		r_core_panels_layout (panels);
 	}
+
+	loadLayoutSavedCb(core);
 repeat:
 	core->panels = panels;
 	core->cons->event_resize = NULL; // avoid running old event with new data
