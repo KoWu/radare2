@@ -2036,7 +2036,7 @@ static char *get_body(RCore *core, ut64 addr, int size, int opts) {
 	}
 	r_config_hold_i (hc, "asm.lines", "asm.bytes",
 		"asm.cmt.col", "asm.marks", "asm.offset",
-		"asm.comments", "asm.cmt.right", NULL);
+		"asm.comments", "asm.cmt.right", "asm.bb.line", NULL);
 	const bool o_comments = r_config_get_i (core->config, "graph.comments");
 	const bool o_cmtright = r_config_get_i (core->config, "graph.cmtright");
 	const bool o_bytes = r_config_get_i (core->config, "graph.bytes");
@@ -2056,6 +2056,7 @@ static char *get_body(RCore *core, ut64 addr, int size, int opts) {
 	const char *cmd = (opts & BODY_SUMMARY)? "pds": "pD";
 
 	// configure options
+	r_config_set_i (core->config, "asm.bb.line", false);
 	r_config_set_i (core->config, "asm.lines", false);
 	r_config_set_i (core->config, "asm.cmt.col", 0);
 	r_config_set_i (core->config, "asm.marks", false);
@@ -3413,23 +3414,24 @@ static int agraph_print(RAGraph *g, int is_interactive, RCore *core, RAnalFuncti
 	}
 
 	r_cons_canvas_print_region (g->can);
-	if (is_interactive) {
-		r_cons_newline ();
-	}
 
 	if (is_interactive) {
+		r_cons_newline ();
 		const char *cmdv = r_config_get (core->config, "cmd.gprompt");
+		bool mustFlush = false;
 		r_cons_visual_flush ();
 		if (cmdv && *cmdv) {
 			r_cons_gotoxy (0, 2);
 			r_cons_strcat (Color_RESET);
 			r_core_cmd0 (core, cmdv);
+			mustFlush = true;
+		}
+		if (core && core->scr_gadgets) {
+			r_core_cmd0 (core, "pg");
+		}
+		if (mustFlush) {
 			r_cons_flush ();
 		}
-	}
-	if (core && core->scr_gadgets) {
-		r_core_cmd0 (core, "pg");
-		r_cons_flush ();
 	}
 	return true;
 }
@@ -3491,7 +3493,13 @@ static int agraph_refresh(struct agraph_refresh_data *grd) {
 		}
 	}
 
-	return agraph_print (g, grd->fs, core, *fcn);
+	int res = agraph_print (g, grd->fs, core, *fcn);
+
+	if (r_config_get_i (core->config, "scr.scrollbar")) {
+		r_core_print_scrollbar (core);
+	}
+	
+	return res;
 }
 
 static void agraph_refresh_oneshot(struct agraph_refresh_data *grd) {
@@ -3794,6 +3802,9 @@ R_API void r_agraph_reset(RAGraph *g) {
 	}
 	g->nodes = sdb_new0 ();
 	g->update_seek_on = NULL;
+	g->need_reload_nodes = false;
+	g->need_set_layout = true;
+	g->need_update_dim = true;
 	g->x = g->y = g->w = g->h = 0;
 	agraph_sdb_init (g);
 	g->curnode = NULL;
@@ -3828,8 +3839,8 @@ static void visual_offset(RAGraph *g, RCore *core) {
 	r_cons_get_size (&rows);
 	r_cons_gotoxy (0, rows);
 	r_cons_flush ();
-	core->cons->line->offset_prompt = true;
-	r_line_set_hist_callback (core->cons->line, &offset_history_up, &offset_history_down);
+	core->cons->line->prompt_type = R_LINE_PROMPT_OFFSET;
+	r_line_set_hist_callback (core->cons->line, &r_line_hist_offset_up, &r_line_hist_offset_down);
 	r_line_set_prompt ("[offset]> ");
 	strcpy (buf, "s ");
 	if (r_cons_fgets (buf + 2, sizeof (buf) - 3, 0, NULL) > 0) {
@@ -3837,9 +3848,9 @@ static void visual_offset(RAGraph *g, RCore *core) {
 			buf[1] = '.';
 		}
 		r_core_cmd0 (core, buf);
-		r_line_set_hist_callback (core->cons->line, &cmd_history_up, &cmd_history_down);
-		core->cons->line->offset_prompt = false;
+		r_line_set_hist_callback (core->cons->line, &r_line_hist_cmd_up, &r_line_hist_cmd_down);
 	}
+	core->cons->line->prompt_type = R_LINE_PROMPT_DEFAULT;
 }
 
 static void goto_asmqjmps(RAGraph *g, RCore *core) {
@@ -3957,6 +3968,21 @@ static void rotateColor(RCore *core) {
 		color = 0;
 	}
 	r_config_set_i (core->config, "scr.color", color);
+}
+
+// dupe in visual.c
+static bool toggle_bb(RCore *core, ut64 addr) {
+	RAnalFunction *fcn = r_anal_get_fcn_in (core->anal, addr, R_ANAL_FCN_TYPE_NULL);
+	if (fcn) {
+		RAnalBlock *bb = r_anal_fcn_bbget_in (core->anal, fcn, addr);
+		if (bb) {
+			bb->folded = !bb->folded;
+		} else {
+			r_warn_if_reached ();
+		}
+		return true;
+	}
+	return false;
 }
 
 R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int is_interactive) {
@@ -4104,7 +4130,7 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 			agraph_update_seek (g, get_anode (g->curnode), true);
 			// update scroll (with minor shift)
 			break;
-		case '|':
+		case '=':
 		{         // TODO: edit
 			showcursor (core, true);
 			const char *buf = NULL;
@@ -4117,7 +4143,7 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 			showcursor (core, false);
 		}
 		break;
-		case '=':
+		case '|':
 			{
 				int e = r_config_get_i (core->config, "graph.layout");
 				if (++e > 1) {
@@ -4128,6 +4154,8 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 				g->need_update_dim = true;
 				g->need_set_layout = true;
 			}
+			discroll = 0;
+			agraph_update_seek (g, get_anode (g->curnode), true);
 			break;
 		case 'e':
 			{
@@ -4142,6 +4170,9 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 				get_bbupdate (g, core, fcn);
 			}
 			break;
+		case 'b':
+			r_core_visual_browse (core, "");
+			break;
 		case 'E':
 			{
 				int e = r_config_get_i (core->config, "graph.linemode");
@@ -4154,20 +4185,17 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 				get_bbupdate (g, core, fcn);
 			}
 			break;
-#if 1
-// disabled for now, ultraslow in most situations
 		case '>':
 			if (fcn && r_cons_yesno ('y', "Compute function callgraph? (Y/n)")) {
-				r_core_cmd0 (core, "ag-;.agc* $$;.axtg $$;aggi");
+				r_core_cmd0 (core, "ag-;.agc* @$FB;.axtg @$FB;aggi");
 			}
 			break;
 		case '<':
 			// r_core_visual_refs (core, true);
 			if (fcn) {
-				r_core_cmd0 (core, "ag-;.axtg $$;aggi");
+				r_core_cmd0 (core, "ag-;.axtg $FB;aggi");
 			}
 			break;
-#endif
 		case 'G':
 			r_core_cmd0 (core, "ag-;.dtg*;aggi");
 			break;
@@ -4177,8 +4205,15 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 			}
 			break;
 		case 'Z':
-			if (okey == 27) {
+			if (okey == 27) { // shift-tab
 				agraph_prev_node (g);
+			} else {
+				RANode *n = get_anode (g->curnode);
+				if (n) {
+					ut64 addr = r_num_get (NULL, n->title);
+					toggle_bb (core, addr);
+					g->need_reload_nodes = true;
+				}
 			}
 			break;
 		case 's':
@@ -4191,6 +4226,8 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 			} else {
 				graph_single_step_in (core, g);
 			}
+			discroll = 0;
+			agraph_update_seek (g, get_anode (g->curnode), true);
 			break;
 		case 'S':
 			if (fcn) {
@@ -4246,16 +4283,16 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 				" e            - rotate graph.edges (show/hide edges)\n"
 				" E            - rotate graph.linemode (square/diagonal lines)\n"
 				" F            - enter flag selector\n"
-				" g([A-Za-z]*) - follow jmp/call identified by shortcut (like ;[oa])\n"
+				" g            - go/seek to given offset\n"
 				" G            - debug trace callgraph (generated with dtc)\n"
 				" hjkl/HJKL    - scroll canvas or node depending on graph cursor (uppercase for faster)\n"
 				" m/M          - change mouse modes\n"
 				" n/N          - next/previous scr.nkey (function/flag..)\n"
-				" o            - go/seek to given offset\n"
+				" o([A-Za-z]*) - follow jmp/call identified by shortcut (like ;[oa])\n"
 				" O            - toggle asm.pseudo and asm.esil\n"
 				" p/P          - rotate graph modes (normal, display offsets, minigraph, summary)\n"
 				" q            - back to Visual mode\n"
-				" r            - refresh graph\n"
+				" r            - toggle jmphints/leahints\n"
 				" R            - randomize colors\n"
 				" s/S          - step / step over\n"
 				" tab          - select next node\n"
@@ -4267,7 +4304,7 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 				" x/X          - jump to xref/ref\n"
 				" Y            - toggle tiny graph\n"
 				" z            - toggle node folding\n"
-				" Z            - follow parent node");
+				" Z            - toggle basic block folding");
 			r_cons_less ();
 			r_cons_any_key (NULL);
 			break;
@@ -4350,8 +4387,16 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 				g->need_reload_nodes = true;
 			}
 			// TODO: toggle shortcut hotkeys
-			r_core_cmd0 (core, "e!asm.hint.jmp");
-			r_core_cmd0 (core, "e!asm.hint.lea");
+			if (r_config_get_i (core->config, "asm.hint.call")) {
+				r_core_cmd0 (core, "e!asm.hint.call");
+				r_core_cmd0 (core, "e!asm.hint.jmp");
+			} else if (r_config_get_i (core->config, "asm.hint.jmp")) {
+				r_core_cmd0 (core, "e!asm.hint.jmp");
+				r_core_cmd0 (core, "e!asm.hint.lea");
+			} else if (r_config_get_i (core->config, "asm.hint.lea")) {
+				r_core_cmd0 (core, "e!asm.hint.lea");
+				r_core_cmd0 (core, "e!asm.hint.call");
+			}
 			break;
 		case '$':
 			r_core_cmd (core, "dr PC=$$", 0);
@@ -4371,7 +4416,7 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 			get_bbupdate (g, core, fcn);
 			break;
 		case '!':
-			r_core_visual_panels (core, NULL);
+			r_core_visual_panels_root (core, core->panels_root);
 			break;
 		case '\'':
 			if (fcn) {
@@ -4443,6 +4488,8 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 			break;
 		case 'z':
 			agraph_toggle_mini (g);
+			discroll = 0;
+			agraph_update_seek (g, get_anode (g->curnode), true);
 			break;
 		case 'v':
 			r_core_visual_anal (core, NULL);

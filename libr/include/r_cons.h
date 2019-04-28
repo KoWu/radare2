@@ -18,23 +18,25 @@ extern "C" {
 #include <r_util/r_str.h>
 #include <r_util/r_sys.h>
 #include <r_util/r_file.h>
+#include <r_vector.h>
 #include <sdb.h>
 
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#if __UNIX__ || __CYGWIN__ && !defined(MINGW32)
+#if __UNIX__
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
 #endif
-#if __WINDOWS__ && !defined(__CYGWIN__)
+#if __WINDOWS__
 #include <windows.h>
 #include <wincon.h>
-#endif
+#else
 #include <unistd.h>
+#endif
 
 /* constants */
 #define CONS_MAX_USER 102400
@@ -452,7 +454,7 @@ typedef struct r_cons_t {
 	RConsQueueTaskOneshot cb_task_oneshot;
 
 	void *user; // Used by <RCore*>
-#if __UNIX__ || __CYGWIN__ && !defined(MINGW32)
+#if __UNIX__
 	struct termios term_raw, term_buf;
 #elif __WINDOWS__
 	DWORD term_raw, term_buf;
@@ -470,7 +472,7 @@ typedef struct r_cons_t {
 	const char **vline;
 	int refcnt;
 	bool newline;
-#if __WINDOWS__ && !__CYGWIN__
+#if __WINDOWS__
 	bool ansicon;
 #endif
 	bool flush;
@@ -689,6 +691,7 @@ typedef void (*RConsBreak)(void *);
 R_API void r_cons_break_end(void);
 R_API bool r_cons_is_breaked(void);
 R_API bool r_cons_is_interactive(void);
+R_API bool r_cons_default_context_is_interactive(void);
 R_API void r_cons_break_timeout(int timeout);
 R_API void r_cons_breakword(const char *s);
 R_API void *r_cons_sleep_begin(void);
@@ -800,7 +803,6 @@ R_API char *r_cons_rainbow_get(int idx, int last, bool bg);
 R_API void r_cons_rainbow_free(RConsContext *ctx);
 R_API void r_cons_rainbow_new(RConsContext *ctx, int sz);
 
-// TODO: use gets() .. MUST BE DEPRECATED
 R_API int r_cons_fgets(char *buf, int len, int argc, const char **argv);
 R_API char *r_cons_hud(RList *list, const char *prompt);
 R_API char *r_cons_hud_path(const char *path, int dir);
@@ -872,15 +874,19 @@ typedef struct r_line_buffer_t {
 } RLineBuffer;
 
 typedef struct r_line_t RLine; // forward declaration
+typedef struct r_line_comp_t RLineCompletion;
 
-typedef int (*RLineCallback)(RLine *line);
+typedef enum { R_LINE_PROMPT_DEFAULT, R_LINE_PROMPT_OFFSET, R_LINE_PROMPT_FILE } RLinePromptType;
 
-typedef struct r_line_comp_t {
+typedef int (*RLineCompletionCb)(RLineCompletion *completion, RLineBuffer *buf, RLinePromptType prompt_type, void *user);
+
+struct r_line_comp_t {
 	bool opt;
-	int argc;
-	const char **argv;
-	RLineCallback run;
-} RLineCompletion;
+	size_t args_limit;
+	RPVector args; /* <char *> */
+	RLineCompletionCb run;
+	void *run_user;
+};
 
 typedef char* (*RLineEditorCb)(void *core, const char *str);
 typedef int (*RLineHistoryUpCb)(RLine* line);
@@ -906,13 +912,12 @@ struct r_line_t {
 	int (*hist_down)(void *user);
 	char *contents;
 	bool zerosep;
-	bool offset_prompt;
+	RLinePromptType prompt_type;
 	int offset_hist_index;
-	bool file_prompt;
 	int file_hist_index;
 	RList *sdbshell_hist;
 	RListIter *sdbshell_hist_iter;
-#if __WINDOWS__ && !__CYGWIN__
+#if __WINDOWS__
 	bool ansicon;
 #endif
 }; /* RLine */
@@ -940,8 +945,14 @@ R_API int r_line_hist_list(void);
 R_API const char *r_line_hist_get(int n);
 
 R_API int r_line_set_hist_callback(RLine *line, RLineHistoryUpCb cb_up, RLineHistoryDownCb cb_down);
-R_API int cmd_history_up(RLine *line);
-R_API int cmd_history_down(RLine *line);
+R_API int r_line_hist_cmd_up(RLine *line);
+R_API int r_line_hist_cmd_down(RLine *line);
+
+R_API void r_line_completion_init(RLineCompletion *completion, size_t args_limit);
+R_API void r_line_completion_fini(RLineCompletion *completion);
+R_API void r_line_completion_push(RLineCompletion *completion, const char *str);
+R_API void r_line_completion_set(RLineCompletion *completion, int argc, const char **argv);
+R_API void r_line_completion_clear(RLineCompletion *completion);
 
 #define R_CONS_INVERT(x,y) (y? (x?Color_INVERT: Color_INVERT_RESET): (x?"[":"]"))
 
@@ -1069,6 +1080,7 @@ typedef enum {
 
 typedef enum {
 	PANEL_FUN_SNOW,
+	PANEL_FUN_SAKURA,
 	PANEL_FUN_NOFUN
 } RPanelsFun;
 
@@ -1084,13 +1096,16 @@ typedef struct {
 
 typedef struct r_panels_t {
 	RConsCanvas *can;
-	RPanel *panel;
+	RPanel **panel;
 	int n_panels;
 	int columnWidth;
 	int curnode;
 	bool isResizing;
+	bool autoUpdate;
+	char *cfg;
 	RPanelsMenu *panelsMenu;
 	Sdb *db;
+	Sdb *rotate_db;
 	HtPP *mht;
 	RPanelsMode mode;
 	RPanelsFun fun;
@@ -1098,6 +1113,12 @@ typedef struct r_panels_t {
 	RPanelsLayout layout;
 	RList *snows;
 } RPanels;
+
+typedef struct r_panels_root_t {
+	int n_panels;
+	int cur_panels;
+	RPanels **panels;
+} RPanelsRoot;
 
 #ifdef __cplusplus
 }

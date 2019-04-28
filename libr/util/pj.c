@@ -39,6 +39,7 @@ R_API void pj_free(PJ *pj) {
 
 R_API char *pj_drain(PJ *pj) {
 	if (pj) {
+		r_return_val_if_fail (pj->level == 0, NULL);
 		char *res = r_strbuf_drain (pj->sb);
 		pj->sb = NULL;
 		free (pj);
@@ -82,30 +83,26 @@ R_API PJ *pj_a(PJ *j) {
 }
 
 R_API PJ *pj_end(PJ *j) {
-	if (j) {
-		r_return_val_if_fail (j && j->level > 0, NULL);
-		if (--j->level < 1) {
-			char msg[2] = { j->braces[j->level], 0 };
-			pj_raw (j, msg);
-			j->level = 0;
-			return j;
-		}
-		j->is_first = false;
+	r_return_val_if_fail (j && j->level > 0, NULL);
+	if (--j->level < 1) {
 		char msg[2] = { j->braces[j->level], 0 };
 		pj_raw (j, msg);
+		j->level = 0;
+		return j;
 	}
+	j->is_first = false;
+	char msg[2] = { j->braces[j->level], 0 };
+	pj_raw (j, msg);
 	return j;
 }
 
 R_API PJ *pj_k(PJ *j, const char *k) {
-	if (j && k) {
-		r_return_val_if_fail (j && k, NULL);
-		j->is_key = false;
-		pj_s (j, k);
-		pj_raw (j, ":");
-		j->is_first = false;
-		j->is_key = true;
-	}
+	r_return_val_if_fail (j && k, j);
+	j->is_key = false;
+	pj_s (j, k);
+	pj_raw (j, ":");
+	j->is_first = false;
+	j->is_key = true;
 	return j;
 }
 
@@ -149,7 +146,7 @@ R_API PJ *pj_ki(PJ *j, const char *k, int i) {
 }
 
 R_API PJ *pj_ks(PJ *j, const char *k, const char *v) {
-	if (j && v && *v) {
+	if (j && k && v && *v) {
 		pj_k (j, k);
 		pj_s (j, v);
 	}

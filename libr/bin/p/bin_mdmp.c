@@ -192,8 +192,11 @@ static bool load_bytes(RBinFile *bf, void **bin_obj, const ut8 *buf, ut64 sz, ut
 		return false;
 	}
 
-	tbuf = r_buf_new ();
-	r_buf_set_bytes (tbuf, buf, sz);
+	tbuf = r_buf_new_with_bytes (buf, sz);
+	if (!tbuf) {
+		return false;
+	}
+
 	if ((res = r_bin_mdmp_new_buf (tbuf))) {
 		sdb_ns_set (sdb, "info", res->kv);
 	}
@@ -218,13 +221,12 @@ static void *load_buffer(RBinFile *bf, RBuffer *buf, ut64 loadaddr, Sdb *sdb) {
 }
 
 static bool load(RBinFile *bf) {
-	const ut8 *bytes = bf? r_buf_buffer (bf->buf): NULL;
-	ut64 sz = bf? r_buf_size (bf->buf): 0;
-
 	if (!bf || !bf->o) {
 		return false;
 	}
 
+	ut64 sz;
+	const ut8 *bytes = r_buf_buffer (bf->buf, &sz);
 	return load_bytes (bf, &bf->o->bin_obj, bytes, sz, bf->o->loadaddr, bf->sdb);
 }
 

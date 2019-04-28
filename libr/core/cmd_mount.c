@@ -1,6 +1,6 @@
-/* radare - LGPL - Copyright 2009-2018 // pancake */
+/* radare - LGPL - Copyright 2009-2019 // pancake */
 
-#define ms_argc (sizeof (ms_argv)/sizeof(const char*))
+#define ms_argc (sizeof (ms_argv) / sizeof(const char*) - 1)
 static const char *ms_argv[] = {
 	"?", "!", "ls", "cd", "cat", "get", "mount", "help", "q", "exit", NULL
 };
@@ -13,9 +13,10 @@ static const char *help_msg_m[] = {
 	"m", " /mnt", "Mount fs at /mnt with autodetect fs and current offset",
 	"m", " /mnt ext2 0", "Mount ext2 fs at /mnt with delta 0 on IO",
 	"m-/", "", "Umount given path (/)",
+	"mc", "[file]", "Cat: Show the contents of the given file",
 	"md", " /", "List directory contents for path",
 	"mf", "[?] [o|n]", "Search files for given filename or for offset",
-	"mg", " /foo", "Get contents of file/dir dumped to disk (XXX?)",
+	"mg", " /foo", "Get fs file/dir and dump it to disk",
 	"mo", " /foo/bar", "Open given file into a malloc://",
 	"mi", " /foo/bar", "Get offset and size of given file",
 	"mp", "", "List all supported partition types",
@@ -47,8 +48,7 @@ static char *cwd = NULL;
 static char * av[1024] = {NULL};
 #define av_max 1024
 
-static char **getFilesFor(RLine *line, const char *path, int *ac) {
-	RCore *core = line->user;
+static char **getFilesFor(RCore *core, const char *path, int *ac) {
 	RFS *fs = core->fs;
 	RListIter *iter;
 	RFSFile *file;
@@ -112,10 +112,9 @@ static char **getFilesFor(RLine *line, const char *path, int *ac) {
 	return av;
 }
 
-static int ms_autocomplete(RLine *line) {
-	const char *data = line->buffer.data;
-	line->completion.argc = ms_argc;
-	line->completion.argv = ms_argv;
+static int ms_autocomplete(RLineCompletion *completion, RLineBuffer *buf, RLinePromptType prompt_type, void *user) {
+	const char *data = buf->data;
+	r_line_completion_set (completion, ms_argc, ms_argv);
 	if (!strncmp (data, "ls ", 3)
 		|| !strncmp (data, "cd ", 3)
 		|| !strncmp (data, "cat ", 4)
@@ -125,9 +124,8 @@ static int ms_autocomplete(RLine *line) {
 			//eprintf ("FILE (%s)\n", file);
 			int tmp_argc = 0;
 			// TODO: handle abs vs rel
-			char **tmp_argv = getFilesFor (line, file, &tmp_argc);
-			line->completion.argc = tmp_argc;
-			line->completion.argv = (const char **)tmp_argv;
+			char **tmp_argv = getFilesFor (user, file, &tmp_argc);
+			r_line_completion_set (completion, tmp_argc, (const char **)tmp_argv);
 		}
 		return true;
 	}
@@ -287,7 +285,7 @@ static int cmd_mount(void *data, const char *_input) {
 			eprintf ("Cannot open file\n");
 		}
 		break;
-	case 'g': // "mg"
+	case 'c': // "mc"
 		input++;
 		if (*input == ' ') {
 			input++;
@@ -304,6 +302,33 @@ static int cmd_mount(void *data, const char *_input) {
 			r_cons_memcat ((const char *)file->data, file->size);
 			r_fs_close (core->fs, file);
 			r_cons_memcat ("\n", 1);
+		} else if (!r_fs_dir_dump (core->fs, input, ptr)) {
+			eprintf ("Cannot open file\n");
+		}
+		break;
+	case 'g': // "mg"
+		input++;
+		if (*input == ' ') {
+			input++;
+		}
+		ptr = strchr (input, ' ');
+		if (ptr) {
+			*ptr++ = 0;
+		} else {
+			ptr = "./";
+		}
+		file = r_fs_open (core->fs, input);
+		if (file) {
+			char *localFile = strdup (input);
+			char *slash = (char *)r_str_rchr (localFile, NULL, '/');
+			if (slash) {
+				memmove (localFile, slash + 1, strlen (slash));
+			}
+			r_fs_read (core->fs, file, 0, file->size);
+			r_file_dump (localFile, file->data, file->size, false);
+			r_fs_close (core->fs, file);
+			eprintf ("File '%s' created.\n", localFile);
+			free (localFile);
 		} else if (!r_fs_dir_dump (core->fs, input, ptr)) {
 			eprintf ("Cannot open file\n");
 		}
@@ -372,8 +397,8 @@ static int cmd_mount(void *data, const char *_input) {
 			RLineCompletion c;
 			memcpy (&c, &rli->completion, sizeof (c));
 			rli->completion.run = ms_autocomplete;
-			rli->completion.argc = ms_argc;
-			rli->completion.argv = ms_argv;
+			rli->completion.run_user = rli->user;
+			r_line_completion_set (&rli->completion, ms_argc, ms_argv);
 			r_fs_shell_prompt (&shell, core->fs, input);
 			free (cwd);
 			memcpy (&rli->completion, &c, sizeof (c));

@@ -8,26 +8,18 @@
 
 #define PANEL_TITLE_SYMBOLS      "Symbols"
 #define PANEL_TITLE_STACK        "Stack"
-#define PANEL_TITLE_STACKREFS    "StackRefs"
 #define PANEL_TITLE_REGISTERS    "Registers"
 #define PANEL_TITLE_REGISTERREFS "RegisterRefs"
 #define PANEL_TITLE_DISASSEMBLY  "Disassembly"
-#define PANEL_TITLE_PSEUDO       "Pseudo"
+#define PANEL_TITLE_DECOMPILER   "Decompiler"
 #define PANEL_TITLE_GRAPH        "Graph"
 #define PANEL_TITLE_FUNCTIONS    "Functions"
-#define PANEL_TITLE_FCNINFO      "FcnInfo"
 
 #define PANEL_CMD_SYMBOLS        "isq"
-#define PANEL_CMD_STACK          "px 256@r:SP"
-#define PANEL_CMD_STACKREFS      "pxr 256@r:SP"
-#define PANEL_CMD_LOCALS         "afvd"
-#define PANEL_CMD_REGISTERS      "dr="
-#define PANEL_CMD_REGISTERREFS   "drr"
-#define PANEL_CMD_DISASSEMBLY    "pd $r"
-#define PANEL_CMD_PSEUDO         "pdc"
+#define PANEL_CMD_STACK          "px"
+#define PANEL_CMD_REGISTERS      "dr"
+#define PANEL_CMD_DISASSEMBLY    "pd"
 #define PANEL_CMD_GRAPH          "agf"
-#define PANEL_CMD_FUNCTIONS      "afl"
-#define PANEL_CMD_FCNINFO        "afi"
 #define PANEL_CMD_HEXDUMP        "xc"
 
 #define PANEL_CONFIG_MENU_MAX    64
@@ -36,6 +28,8 @@
 #define PANEL_CONFIG_RESIZE_W    4
 #define PANEL_CONFIG_RESIZE_H    4
 
+#define COUNT(x) (sizeof((x)) / sizeof((*x)) - 1)
+
 typedef enum {
 	LEFT,
 	RIGHT,
@@ -43,8 +37,18 @@ typedef enum {
 	DOWN
 } Direction;
 
+static const char *panels_dynamic [] = {
+	"Disassembly", "Decompiler", "Stack", "Registers",
+	NULL
+};
+
+static const char *panels_static [] = {
+	"Disassembly", "Decompiler", "Functions", "Symbols",
+	NULL
+};
+
 static const char *menus[] = {
-	"File", "Edit", "View", "Tools", "Search", "Debug", "Analyze", "Help",
+	"File", "Edit", "View", "Tools", "Search", "Debug", "Analyze", "Fun", "About", "Help",
 	NULL
 };
 
@@ -68,9 +72,14 @@ static const char *menus_Edit[] = {
 	NULL
 };
 
+static const char *menus_iocache[] = {
+	"On", "Off",
+	NULL
+};
+
 static const char *menus_View[] = {
-	"Hexdump", "Disassembly", "Graph", "FcnInfo", "Functions", "Breakpoints", "Comments", "Entropy", "Colors",
-	"Stack", "StackRefs", "Pseudo", "Var READ address", "Var WRITE address",
+	"Hexdump", "Disassembly", "Decompiler", "Graph", "Functions", "Breakpoints", "Comments", "Entropy", "Entropy Fire", "Colors",
+	"Stack", "Var READ address", "Var WRITE address", "Summary",
 	NULL
 };
 
@@ -85,7 +94,7 @@ static const char *menus_Search[] = {
 };
 
 static const char *menus_Debug[] = {
-	"Registers", "RegisterRefs", "DRX", "Breakpoints", "Watchpoints",
+	"Registers", "DRX", "Breakpoints", "Watchpoints",
 	"Maps", "Modules", "Backtrace", "Locals", "Continue",
 	"Step", "Step Over", "Reload",
 	NULL
@@ -96,8 +105,34 @@ static const char *menus_Analyze[] = {
 	NULL
 };
 
-static const char *menus_Help[] = {
-	"Fortune", "Commands", "2048", "License", "Lock Screen", "About",
+static const char *menus_Fun[] = {
+	"Fortune", "2048",
+	NULL
+};
+
+static const char *menus_About[] = {
+	"License", "Version",
+	NULL
+};
+
+
+static const char *entropy_rotate[] = {
+	"", "2", "b", "c", "d", "e", "F", "i", "j", "m", "p", "s", "z", "0",
+	NULL
+};
+
+static const char *hexdump_rotate[] = {
+	"", "a", "r", "b", "h", "w", "q", "d", "r",
+	NULL
+};
+
+static const char *register_rotate[] = {
+	"", "=", "r", "??", "C", "i", "o",
+	NULL
+};
+
+static const char *function_rotate[] = {
+	"l", "i", "x",
 	NULL
 };
 
@@ -105,93 +140,122 @@ static const char *help_msg_panels[] = {
 	"|",        "split the current panel vertically",
 	"-",        "split the current panel horizontally",
 	":",        "run r2 command in prompt",
+	";",        "add/remove comment",
 	"_",        "start the hud input mode",
+	"\\",       "show the user-friendly hud",
 	"?",        "show this help",
-	"??",       "show the user-friendly hud",
 	"!",        "run r2048 game",
 	".",        "seek to PC or entrypoint",
-	"*",        "show pseudo code/r2dec in the current panel",
+	"*",        "show decompiler in the current panel",
 	"/",        "highlight the keyword",
 	"(",        "toggle snow",
+	"&",        "toggle cache",
 	"[1-9]",    "follow jmp/call identified by shortcut (like ;[1])",
 	"' '",      "(space) toggle graph / panels",
 	"tab",      "go to the next panel",
+	"Enter",    "start Zoom mode",
+	"a",        "toggle auto update for decompiler",
 	"b",        "browse symbols, flags, configurations, classes, ...",
 	"c",        "toggle cursor",
 	"C",        "toggle color",
 	"d",        "define in the current address. Same as Vd",
 	"D",        "show disassembly in the current panel",
 	"e",        "change title and command of current panel",
-	"g",        "show graph in the current panel",
+	"g",        "go/seek to given offset",
+	"G",        "show graph in the current panel",
 	"i",        "insert hex",
 	"hjkl",     "move around (left-down-up-right)",
-	"J",        "scroll panels down by page",
-	"K",        "scroll panels up by page",
+	"HJKL",     "move around (left-down-up-right) by page",
 	"m",        "select the menu panel",
 	"M",        "open new custom frame",
-	"nN",       "create new panel with given command",
-	"o",        "go/seek to given offset",
-	"pP",       "seek to next or previous scr.nkey",
-	"q",        "quit, back to visual mode",
-	"r",        "toggle jmphints/leahints",
-	"sS",       "step in / step over",
-	"uU",       "undo / redo seek",
+	"n/N",      "seek next/prev function/flag/hit (scr.nkey)",
+	"p/P",      "rotate panel layout",
+	"q",        "quit, or close a tab",
+	"Q",        "close all the tabs and quit",
+	"r",        "toggle callhints/jmphints/leahints",
+	"R",        "randomize color palette (ecr)",
+	"s/S",      "step in / step over",
+	"t/T",      "tab prompt / close a tab",
+	"u/U",      "undo / redo seek",
 	"w",        "start Window mode",
 	"V",        "go to the graph mode",
-	"X",        "close current panel",
+	"xX",       "show xrefs/refs of current function from/to data/code",
 	"z",        "swap current panel with the first one",
 	NULL
 };
 
 static const char *help_msg_panels_window[] = {
+	":",        "run r2 command in prompt",
+	";",        "add/remove comment",
 	"?",        "show this help",
-	"??",       "show the user-friendly hud",
+	"|",        "split the current panel vertically",
+	"-",        "split the current panel horizontally",
+	"tab",      "go to the next panel",
 	"Enter",    "start Zoom mode",
-	"c",        "toggle cursor",
+	"d",        "define in the current address. Same as Vd",
+	"b",        "browse symbols, flags, configurations, classes, ...",
 	"hjkl",     "move around (left-down-up-right)",
-	"JK",       "resize panels vertically",
-	"HL",       "resize panels horizontally",
-	"q",        "quit Window mode",
+	"HJKL",     "resize panels vertically/horizontally",
+	"Q/q/w",    "quit Window mode",
+	"p/P",      "rotate panel layout",
+	"t/T",      "rotate related commands in a panel",
+	"X",        "close current panel",
 	NULL
 };
 
 static const char *help_msg_panels_zoom[] = {
 	"?",        "show this help",
-	"??",       "show the user-friendly hud",
 	":",        "run r2 command in prompt",
-	"Enter",    "quit Zoom mode",
+	";",        "add/remove comment",
+	"' '",      "(space) toggle graph / panels",
 	"tab",      "go to the next panel",
+	"b",        "browse symbols, flags, configurations, classes, ...",
+	"d",        "define in the current address. Same as Vd",
+	"c",        "toggle cursor",
+	"C",        "toggle color",
 	"hjkl",     "move around (left-down-up-right)",
-	"sS",       "step in / step over",
-	"X",        "close current panel",
-	"q",        "quit Zoom mode",
+	"p/P",      "seek to next or previous scr.nkey",
+	"s/S",      "step in / step over",
+	"t/T",      "rotate related commands in a panel",
+	"xX",       "show xrefs/refs of current function from/to data/code",
+	"q/Q/Enter","quit Zoom mode",
 	NULL
 };
 
+static RPanels *panels_new(RCore *core);
+static void panels_check_stackbase(RCore *core);
+static void panels_layout(RPanels *panels);
 static void layoutDefault(RPanels *panels);
-static int layoutSidePanel(void *user);
-static void changePanelNum(RPanels *panels, int now, int after);
-static void splitPanelVertical(RCore *core);
-static void splitPanelHorizontal(RCore *core);
+static void adjustSidePanels(RCore *core);
+static int addCmdPanel(void *user);
+static void addHelpPanel(RCore *core);
+static char *loadCmdf(RCore *core, RPanel *p, char *input, char *str);
+static int addCmdfPanel(RCore *core, char *input, char *str);
+static void insertPanel(RCore *core, int n, const char *name, const char*cmd, bool cache);
+static void splitPanelVertical(RCore *core, RPanel *p, const char *name, const char*cmd, bool cache);
+static void splitPanelHorizontal(RCore *core, RPanel *p, const char *name, const char*cmd, bool cache);
 static void panelPrint(RCore *core, RConsCanvas *can, RPanel *panel, int color);
 static void menuPanelPrint(RConsCanvas *can, RPanel *panel, int x, int y, int w, int h);
 static void defaultPanelPrint(RCore *core, RConsCanvas *can, RPanel *panel, int x, int y, int w, int h, int color);
 static void panelAllClear(RPanels *panels);
 static bool checkPanelNum(RPanels *panels);
-static void addPanelFrame(RCore *core, const char *title, const char *cmd, const bool caching);
 static bool checkFunc(RCore *core);
-static char *handleCacheCmdStr(RCore *core, RPanel* panel);
+static bool checkFuncDiff(RCore *core, RPanel *p);
+static bool findCmdStrCache(RCore *core, RPanel *panel, char **str);
+static char *handleCmdStrCache(RCore *core, RPanel *panel);
 static void activateCursor(RCore *core);
 static void cursorLeft(RCore *core);
 static void cursorRight(RCore *core);
 static void cursorDown(RCore *core);
 static void cursorUp(RCore *core);
 static int cursorThreshold(RPanel* panel);
-static void delPanel(RPanels *panels, int delPanelNum);
-static void delCurPanel(RPanels *panels);
+static void delPanel(RPanels *ps, int pi);
+static void dismantleDelPanel(RPanels *ps, RPanel *p, int pi);
 static void delInvalidPanels(RPanels *panels);
 static void fixBlockSize(RCore *core);
-static void dismantlePanel(RPanels *panels);
+static void dismantlePanel(RPanels *ps, RPanel *p);
+static void panels_refresh(RCore *core);
+static void panels_layout_refresh(RCore *core);
 static void doPanelsRefresh(RCore *core);
 static void doPanelsRefreshOneShot(RCore *core);
 static void refreshCoreOffset (RCore *core);
@@ -204,6 +268,8 @@ static void resizePanelUp(RPanels *panels);
 static void resizePanelDown(RPanels *panels);
 static void fitToCanvas(RPanels *panels);
 static void handleTabKey(RCore *core, bool shift);
+static void undoSeek(RCore *core);
+static void redoSeek(RCore *core);
 static int openMenuCb(void *user);
 static int openFileCb(void *user);
 static int rwCb(void *user);
@@ -218,7 +284,6 @@ static int writeStrCb(void *user);
 static int writeHexCb(void *user);
 static int assembleCb(void *user);
 static int fillCb(void *user);
-static int iocacheCb(void *user);
 static int colorsCb(void *user);
 static int calculatorCb(void *user);
 static int r2shellCb(void *user);
@@ -239,12 +304,14 @@ static int callsCb(void *user);
 static int breakpointsCb(void *user);
 static int watchpointsCb(void *user);
 static int referencesCb(void *user);
+static int helpCb(void *user);
 static int fortuneCb(void *user);
-static int commandsCb(void *user);
 static int gameCb(void *user);
 static int licenseCb(void *user);
-static int aboutCb(void *user);
+static int versionCb(void *user);
 static int quitCb(void *user);
+static int ioCacheOnCb(void *user);
+static int ioCacheOffCb(void *user);
 static void directionDefaultCb(void *user, int direction);
 static void directionDisassemblyCb(void *user, int direction);
 static void directionGraphCb(void *user, int direction);
@@ -252,18 +319,27 @@ static void directionRegisterCb(void *user, int direction);
 static void directionStackCb(void *user, int direction);
 static void directionHexdumpCb(void *user, int direction);
 static void updateDisassemblyAddr (RCore *core);
+static void setMode(RPanels *ps, RPanelsMode mode);
+static void updateHelp(RPanels *ps);
 static void addMenu(RCore *core, const char *parent, const char *name, RPanelsMenuCallback cb);
 static void removeMenu(RPanels *panels);
 static int file_history_up(RLine *line);
 static int file_history_down(RLine *line);
 static void hudstuff(RCore *core);
 static char *getPanelsConfigPath();
+static int panels_process(RCore *core, RPanels **r_panels, bool *force_quit);
 static bool init(RCore *core, RPanels *panels, int w, int h);
 static void initSdb(RPanels *panels);
+static void initRotatedb(RPanels *panels);
 static bool initPanelsMenu(RCore *core);
 static bool initPanels(RCore *core, RPanels *panels);
-static RStrBuf *drawMenu(RPanelsMenuItem *item);
-static void moveMenuCursor(RPanelsMenu *menu, RPanelsMenuItem *parent);
+static void clearPanelsMenu(RCore *core);
+static void clearPanelsMenuRec(RPanelsMenuItem *pmi);
+static RStrBuf *drawMenu(RCore *core, RPanelsMenuItem *item);
+static void moveMenuCursor(RCore *core, RPanelsMenu *menu, RPanelsMenuItem *parent);
+static void panels_free(RPanels *panels);
+static void freePanelModel(RPanel *panel);
+static void freePanelView(RPanel *panel);
 static void freeSinglePanel(RPanel *panel);
 static void freeAllPanels(RPanels *panels);
 static void panelBreakpoint(RCore *core);
@@ -272,116 +348,203 @@ static void panelPrompt(const char *prompt, char *buf, int len);
 static void panelSingleStepIn(RCore *core);
 static void panelSingleStepOver(RCore *core);
 static void setRefreshAll(RPanels *panels, bool clearCache);
+static void setRefreshByType(RPanels *panels, const char *cmd, bool clearCache);
 static void setCursor(RCore *core, bool cur);
 static void savePanelPos(RPanel* panel);
 static void restorePanelPos(RPanel* panel);
-static void savePanelsLayout(RCore* core, bool temp);
-static int loadSavedPanelsLayout(RCore *core, bool temp);
-static void replaceCmd(RPanels *panels, const char *title, const char *cmd, const bool caching);
+static void savePanelsLayout(RPanels* panels, char **cfg, bool temp);
+static int loadSavedPanelsLayout(RCore *core, char *cfg, bool temp);
+static void replaceCmd(RCore *core, const char *title, const char *cmd, const bool cache);
 static void swapPanels(RPanels *panels, int p0, int p1);
 static bool handleMenu(RCore *core, const int key);
 static void toggleZoomMode(RPanels *panels);
 static void toggleWindowMode(RPanels *panels);
+static void toggleCache (RPanel *p);
 static void maximizePanelSize(RPanels *panels);
 static void insertValue(RCore *core);
 static bool moveToDirection(RPanels *panels, Direction direction);
-static void showHelp(RCore *core, RPanelsMode mode);
+static void toggleHelp(RCore *core);
 static void createDefaultPanels(RCore *core);
-static void createNewPanel(RCore *core, char *name, char *cmd, bool caching);
+static void createNewPanel(RCore *core, bool vertical);
+static void addNewPanel(RCore *core, char *name, char *cmd, bool cache);
 static void printSnow(RPanels *panels);
 static void resetSnow(RPanels *panels);
 static void checkEdge(RPanels *panels);
 static void callVisualGraph(RCore *core);
 static char *parsePanelsConfig(const char *cfg, int len);
+static void rotatePanels(RPanels *panels, bool rev);
+static void rotateDisasCb(void *user, bool rev);
+static void rotatePanelCmds(RCore *core, const char **cmds, const int cmdslen, const char *prefix, bool rev);
+static void rotateEntropyVCb(void *user, bool rev);
+static void rotateEntropyHCb(void *user, bool rev);
+static void rotateHexdumpCb (void *user, bool rev);
+static void rotateAsmemu(RCore *core, RPanel *p);
+static void rotateRegisterCb (void *user, bool rev);
+static void rotateFunctionCb (void *user, bool rev);
+static void setdcb(RPanel *p);
+static void setrcb(RPanels *ps, RPanel *p);
+static void setCmdStrCache(RPanel *p, char *s);
+static void setReadOnly(RPanel *p, char *s);
+static void resetScrollPos(RPanel *p);
 static RPanel *getPanel(RPanels *panels, int i);
 static RPanel *getCurPanel(RPanels *panels);
 static RConsCanvas *createNewCanvas(RCore *core, int w, int h);
+static void buildPanelParam(RCore *core, RPanel *p, const char *title, const char *cmd, bool cache);
+static bool handle_tab(RCore *core);
+static bool handle_tab_nth(RCore *core, int ch);
+static bool handle_tab_next(RCore *core);
+static bool handle_tab_prev(RCore *core);
+static bool handle_tab_new(RCore *core);
+
+static void setCmdStrCache(RPanel *p, char *s) {
+	free (p->model->cmdStrCache);
+	p->model->cmdStrCache = s;
+	if (p->model->cmdStrCache) {
+		setdcb (p);
+	}
+}
+
+static void setReadOnly(RPanel *p, char *s) {
+	free (p->model->readOnly);
+	p->model->readOnly = s;
+}
 
 static RPanel *getPanel(RPanels *panels, int i) {
-	return &panels->panel[i];
+	if (i >= PANEL_NUM_LIMIT) {
+		return NULL;
+	}
+	return panels->panel[i];
 }
 
 static RPanel *getCurPanel(RPanels *panels) {
 	return getPanel (panels, panels->curnode);
 }
 
+static void handlePrompt(RCore *core, RPanels *panels) {
+	r_core_visual_prompt_input (core);
+	int i;
+	for (i = 0; i < panels->n_panels; i++) {
+		RPanel *p = getPanel (panels, i);
+		if (!strncmp (p->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+					strcmp (p->model->cmd, "pdc")) {
+			p->model->addr = core->offset;
+			break;
+		}
+	}
+	setRefreshAll (panels, false);
+}
+
 static void panelPrint(RCore *core, RConsCanvas *can, RPanel *panel, int color) {
-	if (!can || !panel|| !panel->refresh) {
+	if (!can || !panel|| !panel->view->refresh) {
 		return;
 	}
 
-	if (can->w <= panel->pos.x || can->h <= panel->pos.y) {
+	if (can->w <= panel->view->pos.x || can->h <= panel->view->pos.y) {
 		return;
 	}
-	panel->refresh = false;
-	int w = R_MIN (can->w - panel->pos.x, panel->pos.w);
-	int h = R_MIN (can->h - panel->pos.y, panel->pos.h);
-	r_cons_canvas_fill (can, panel->pos.x, panel->pos.y, w, h, ' ');
-	if (panel->type == PANEL_TYPE_MENU) {
-		menuPanelPrint (can, panel, panel->sx, panel->sy, w, h);
+	panel->view->refresh = false;
+	int w = R_MIN (can->w - panel->view->pos.x, panel->view->pos.w);
+	int h = R_MIN (can->h - panel->view->pos.y, panel->view->pos.h);
+	r_cons_canvas_fill (can, panel->view->pos.x, panel->view->pos.y, w, h, ' ');
+	if (panel->model->type == PANEL_TYPE_MENU) {
+		menuPanelPrint (can, panel, panel->view->sx, panel->view->sy, w, h);
 	} else {
-		defaultPanelPrint (core, can, panel, panel->sx, panel->sy, w, h, color);
+		defaultPanelPrint (core, can, panel, panel->view->sx, panel->view->sy, w, h, color);
 	}
 	if (color) {
-		r_cons_canvas_box (can, panel->pos.x, panel->pos.y, w, h, core->cons->context->pal.graph_box2);
+		r_cons_canvas_box (can, panel->view->pos.x, panel->view->pos.y, w, h, core->cons->context->pal.graph_box2);
 	} else {
-		r_cons_canvas_box (can, panel->pos.x, panel->pos.y, w, h, core->cons->context->pal.graph_box);
+		r_cons_canvas_box (can, panel->view->pos.x, panel->view->pos.y, w, h, core->cons->context->pal.graph_box);
 	}
 }
 
 static void menuPanelPrint(RConsCanvas *can, RPanel *panel, int x, int y, int w, int h) {
-	(void) r_cons_canvas_gotoxy (can, panel->pos.x + 2, panel->pos.y + 2);
-	char *text = r_str_ansi_crop (panel->title, x, y, w, h);
+	(void) r_cons_canvas_gotoxy (can, panel->view->pos.x + 2, panel->view->pos.y + 2);
+	char *text = r_str_ansi_crop (panel->model->title, x, y, w, h);
 	if (text) {
 		r_cons_canvas_write (can, text);
 		free (text);
 	} else {
-		r_cons_canvas_write (can, panel->title);
+		r_cons_canvas_write (can, panel->model->title);
 	}
 }
 
 static void defaultPanelPrint(RCore *core, RConsCanvas *can, RPanel *panel, int x, int y, int w, int h, int color) {
 	int graph_pad = 0;
-	char title[128], *text, *cmdStr = NULL;
+	char *readOnly = panel->model->readOnly;
+	char title[128], cache_title[128], *text, *cmdStr = NULL;
 	if (color) {
-		snprintf (title, sizeof (title) - 1,
-				"%s[x] %s"Color_RESET, core->cons->context->pal.graph_box2, panel->title);
+		if (!strcmp (panel->model->title, panel->model->cmd)) {
+			snprintf (title, sizeof (title) - 1,
+					"%s[X] %s"Color_RESET, core->cons->context->pal.graph_box2, panel->model->title);
+		}  else {
+			snprintf (title, sizeof (title) - 1,
+					"%s[X] %s (%s)"Color_RESET, core->cons->context->pal.graph_box2, panel->model->title, panel->model->cmd);
+		}
+		snprintf (cache_title, sizeof (cache_title) - 1,
+				"%s[Cache] %s"Color_RESET, core->cons->context->pal.graph_box2, readOnly ? "N/A" : panel->model->cache ? "On" : "Off");
 	} else {
-		snprintf (title, sizeof (title) - 1,
-				"   %s   ", panel->title);
+		if (!strcmp (panel->model->title, panel->model->cmd)) {
+			snprintf (title, sizeof (title) - 1,
+					"   %s   ", panel->model->title);
+		} else {
+			snprintf (title, sizeof (title) - 1,
+					"   %s (%s)  ", panel->model->title, panel->model->cmd);
+		}
+		snprintf (cache_title, sizeof (cache_title) - 1,
+				"[Cache] %s", readOnly ? "N/A" : panel->model->cache ? "On" : "Off");
 	}
-	if (r_cons_canvas_gotoxy (can, panel->pos.x + 1, panel->pos.y + 1)) {
+	if (r_cons_canvas_gotoxy (can, panel->view->pos.x + 1, panel->view->pos.y + 1)) {
 		r_cons_canvas_write (can, title);
 	}
-	(void) r_cons_canvas_gotoxy (can, panel->pos.x + 2, panel->pos.y + 2);
-	if (panel->cmd) {
-		if (!strcmp (panel->cmd, PANEL_CMD_DISASSEMBLY)) {
-			ut64 o_offset = core->offset;
-			core->offset = panel->addr;
-			r_core_seek (core, panel->addr, 1);
-			r_core_block_read (core);
-			cmdStr = handleCacheCmdStr (core, panel);
-			core->offset = o_offset;
-		} else if (!strcmp (panel->cmd, PANEL_CMD_STACK)) {
-			const int delta = r_config_get_i (core->config, "stack.delta");
-			const char sign = (delta < 0)? '+': '-';
-			const int absdelta = R_ABS (delta);
-			cmdStr = r_core_cmd_strf (core, "%s%c%d", PANEL_CMD_STACK, sign, absdelta);
-		} else if (!strcmp (panel->cmd, PANEL_CMD_HEXDUMP)) {
-			ut64 o_offset = core->offset;
-			if (!panel->caching) {
-				core->offset = panel->addr;
-				r_core_seek (core, core->offset, 1);
-			}
-			cmdStr = handleCacheCmdStr (core, panel);
-			core->offset = o_offset;
-		} else {
-			cmdStr = handleCacheCmdStr (core, panel);
-			if (!strcmp (panel->cmd, PANEL_CMD_GRAPH)) {
-				graph_pad = 1;
-				core->cons->event_resize = NULL; // avoid running old event with new data
-				core->cons->event_data = core;
-				core->cons->event_resize = (RConsEvent) doPanelsRefreshOneShot;
+	if (r_cons_canvas_gotoxy (can, panel->view->pos.x + panel->view->pos.w - r_str_ansi_len (cache_title) - 2, panel->view->pos.y + 1)) {
+		r_cons_canvas_write (can, cache_title);
+	}
+	(void) r_cons_canvas_gotoxy (can, panel->view->pos.x + 2, panel->view->pos.y + 2);
+	if (readOnly) {
+		cmdStr = readOnly;
+	} else {
+		if (panel->model->cmd) {
+			if (!strncmp (panel->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+					strcmp (panel->model->cmd, "pdc")) {
+				if (!findCmdStrCache (core, panel, &cmdStr)) {
+					ut64 o_offset = core->offset;
+					core->offset = panel->model->addr;
+					r_core_seek (core, panel->model->addr, 1);
+					r_core_block_read (core);
+					cmdStr = handleCmdStrCache (core, panel);
+					core->offset = o_offset;
+				}
+			} else if (!strncmp (panel->model->cmd, PANEL_CMD_STACK, strlen (PANEL_CMD_STACK))) {
+				const int delta = r_config_get_i (core->config, "stack.delta");
+				const char sign = (delta < 0)? '+': '-';
+				const int absdelta = R_ABS (delta);
+				cmdStr = r_core_cmd_strf (core, "%s%c%d", panel->model->cmd, sign, absdelta);
+			} else if (!strncmp (panel->model->cmd, PANEL_CMD_HEXDUMP, strlen (PANEL_CMD_HEXDUMP))) {
+				if (!findCmdStrCache (core, panel, &cmdStr)) {
+					ut64 o_offset = core->offset;
+					if (!panel->model->cache) {
+						core->offset = panel->model->addr;
+						r_core_seek (core, core->offset, 1);
+					}
+					cmdStr = handleCmdStrCache (core, panel);
+					core->offset = o_offset;
+				}
+			} else {
+				if ((core->panels->autoUpdate && checkFuncDiff (core, panel)) || !findCmdStrCache (core, panel, &cmdStr)) {
+					cmdStr = handleCmdStrCache (core, panel);
+					if (panel->model->cmdStrCache) {
+						x = 0;
+						y = 0;
+						resetScrollPos (panel);
+					}
+				}
+				if (!strncmp (panel->model->cmd, PANEL_CMD_GRAPH, strlen (PANEL_CMD_GRAPH))) {
+					graph_pad = 1;
+					core->cons->event_resize = NULL; // avoid running old event with new data
+					core->cons->event_data = core;
+					core->cons->event_resize = (RConsEvent) doPanelsRefreshOneShot;
+				}
 			}
 		}
 	}
@@ -407,22 +570,31 @@ static void defaultPanelPrint(RCore *core, RConsCanvas *can, RPanel *panel, int 
 		r_cons_canvas_write (can, text);
 		free (text);
 	}
-	if (!panel->cmdStrCache) {
+	if (!panel->model->cmdStrCache && !readOnly) {
 		free (cmdStr);
 	}
 }
 
-char *handleCacheCmdStr(RCore *core, RPanel* panel) {
-	if (panel->cmdStrCache) {
-		return panel->cmdStrCache;
-	} else {
-		char *ret;
-		ret = r_core_cmd_str (core, panel->cmd);
-		if (panel->caching) {
-			panel->cmdStrCache = ret;
-		}
-		return ret;
+static void resetScrollPos(RPanel *p) {
+	p->view->sx = 0;
+	p->view->sy = 0;
+}
+
+bool findCmdStrCache(RCore *core, RPanel* panel, char **str) {
+	if (panel->model->cmdStrCache) {
+		*str = panel->model->cmdStrCache;
+		return true;
 	}
+	return false;
+}
+
+char *handleCmdStrCache(RCore *core, RPanel *panel) {
+	char *ret;
+	ret = r_core_cmd_str (core, panel->model->cmd);
+	if (panel->model->cache && R_STR_ISNOTEMPTY (ret)) {
+		setCmdStrCache (panel, ret);
+	}
+	return ret;
 }
 
 static void panelAllClear(RPanels *panels) {
@@ -433,13 +605,13 @@ static void panelAllClear(RPanels *panels) {
 	RPanel *panel = NULL;
 	for (i = 0; i < panels->n_panels; i++) {
 		panel = getPanel (panels, i);
-		r_cons_canvas_fill (panels->can, panel->pos.x, panel->pos.y, panel->pos.w, panel->pos.h, ' ');
+		r_cons_canvas_fill (panels->can, panel->view->pos.x, panel->view->pos.y, panel->view->pos.w, panel->view->pos.h, ' ');
 	}
 	r_cons_canvas_print (panels->can);
 	r_cons_flush ();
 }
 
-R_API void r_core_panels_layout (RPanels *panels) {
+static void panels_layout (RPanels *panels) {
 	panels->can->sx = 0;
 	panels->can->sy = 0;
 	layoutDefault(panels);
@@ -452,34 +624,55 @@ static void layoutDefault(RPanels *panels) {
 	int colpos = w - panels->columnWidth;
 	RPanel *p0 = getPanel (panels, 0);
 	RPanel *p1 = getPanel (panels, 1);
-	p0->pos.x = 0;
-	p0->pos.y = 1;
+	p0->view->pos.x = 0;
+	p0->view->pos.y = 1;
 	if (panels->n_panels <= 1) {
-		p0->pos.w = w;
-		p0->pos.h = h - 1;
+		p0->view->pos.w = w;
+		p0->view->pos.h = h - 1;
 		return;
 	}
-	p0->pos.w = colpos + 1;
-	p0->pos.h = h - 1;
-	for (i = 1; i < panels->n_panels; i++) {
+	p0->view->pos.w = colpos / 2 + 1;
+	p0->view->pos.h = h - 1;
+	p1->view->pos.x = colpos / 2;
+	p1->view->pos.y = 1;
+	p1->view->pos.w = colpos / 2 + 1;
+	p1->view->pos.h = h - 1;
+
+	int pos_x = p1->view->pos.x + p1->view->pos.w - 1;
+	for (i = 2; i < panels->n_panels; i++) {
 		RPanel *p = getPanel (panels, i);
-		p->pos.x = colpos;
-		p->pos.y = 2 + (ph * (i - 1));
-		p->pos.w = w - colpos;
-		if (p->pos.w < 0) {
-			p->pos.w = 0;
+		p->view->pos.x = pos_x;
+		p->view->pos.y = 2 + (ph * (i - 2));
+		p->view->pos.w = w - colpos;
+		if (p->view->pos.w < 0) {
+			p->view->pos.w = 0;
 		}
 		if ((i + 1) == panels->n_panels) {
-			p->pos.h = h - p->pos.y;
+			p->view->pos.h = h - p->view->pos.y;
 		} else {
-			p->pos.h = ph;
+			p->view->pos.h = ph;
 		}
-		p->pos.y--;
-		p->pos.h++;
+		p->view->pos.y--;
+		p->view->pos.h++;
 	}
 }
 
-static int layoutSidePanel(void *user) {
+static void adjustSidePanels(RCore *core) {
+	int i, h;
+	(void)r_cons_get_size (&h);
+	RPanels *panels = core->panels;
+	for (i = 0; i < panels->n_panels; i++) {
+		RPanel *p = getPanel (panels, i);
+		if (p->view->pos.x == 0) {
+			if (p->view->pos.w >= PANEL_CONFIG_SIDEPANEL_W) {
+				p->view->pos.x += PANEL_CONFIG_SIDEPANEL_W - 1;
+				p->view->pos.w -= PANEL_CONFIG_SIDEPANEL_W - 1;
+			}
+		}
+	}
+}
+
+static int addCmdPanel(void *user) {
 	RCore *core = (RCore *)user;
 	RPanels *panels = core->panels;
 	if (!checkPanelNum (panels)) {
@@ -492,90 +685,131 @@ static int layoutSidePanel(void *user) {
 	if (!cmd) {
 		return 0;
 	}
-	int i, h;
+	int h;
 	(void)r_cons_get_size (&h);
-	for (i = 0; i < panels->n_panels; i++) {
-		RPanel *p = getPanel (panels, i);
-		if (p->pos.x == 0) {
-			if (p->pos.w >= PANEL_CONFIG_SIDEPANEL_W) {
-				p->pos.x += PANEL_CONFIG_SIDEPANEL_W - 1;
-				p->pos.w -= PANEL_CONFIG_SIDEPANEL_W - 1;
-			}
-		}
-	}
-	bool caching = r_cons_yesno ('y', "Cache the result? (Y/n)");
-	addPanelFrame (core, child->name, cmd, caching);
-	changePanelNum (panels, panels->n_panels - 1, 0);
+	bool cache = r_cons_yesno ('y', "Cache the result? (Y/n)");
+	adjustSidePanels (core);
+	insertPanel (core, 0, child->name, cmd, cache);
 	RPanel *p0 = getPanel (panels, 0);
-	p0->pos.x = 0;
-	p0->pos.y = 1;
-	p0->pos.w = PANEL_CONFIG_SIDEPANEL_W;
-	p0->pos.h = h - 1;
+	p0->view->pos.x = 0;
+	p0->view->pos.y = 1;
+	p0->view->pos.w = PANEL_CONFIG_SIDEPANEL_W;
+	p0->view->pos.h = h - 1;
 	panels->curnode = 0;
 	setRefreshAll (panels, false);
+	setMode (panels, PANEL_MODE_DEFAULT);
 	return 0;
 }
 
-static void splitPanelVertical(RCore *core) {
+static void addHelpPanel(RCore *core) {
+	//TODO: all these things done below are very hacky and refactoring needed
+	RPanels *ps = core->panels;
+	int h;
+	const char *help = "Help";
+	(void)r_cons_get_size (&h);
+	adjustSidePanels (core);
+	insertPanel (core, 0, help, help, true);
+	RPanel *p0 = getPanel (ps, 0);
+	p0->view->pos.x = 0;
+	p0->view->pos.y = 1;
+	p0->view->pos.w = PANEL_CONFIG_SIDEPANEL_W;
+	p0->view->pos.h = h - 1;
+	ps->curnode = 0;
+	setRefreshAll (ps, false);
+	if (ps->mode == PANEL_MODE_MENU) {
+		setMode (ps, PANEL_MODE_DEFAULT);
+	}
+}
+
+static char *loadCmdf(RCore *core, RPanel *p, char *input, char *str) {
+	char *ret = NULL;
+	char *res = r_cons_input (input);
+	if (res) {
+		p->model->cmd = r_str_newf (str, res);
+		ret = r_core_cmd_str (core, p->model->cmd);
+		free (res);
+	}
+	return ret;
+}
+
+static int addCmdfPanel(RCore *core, char *input, char *str) {
+	RPanels *panels = core->panels;
+	if (!checkPanelNum (panels)) {
+		return 0;
+	}
+	int h;
+	(void)r_cons_get_size (&h);
+	RPanelsMenu *menu = core->panels->panelsMenu;
+	RPanelsMenuItem *parent = menu->history[menu->depth - 1];
+	RPanelsMenuItem *child = parent->sub[parent->selectedIndex];
+	adjustSidePanels (core);
+	insertPanel (core, 0, child->name, "", true);
+	RPanel *p0 = getPanel (panels, 0);
+	p0->view->pos.x = 0;
+	p0->view->pos.y = 1;
+	p0->view->pos.w = PANEL_CONFIG_SIDEPANEL_W;
+	p0->view->pos.h = h - 1;
+	setCmdStrCache (p0, loadCmdf (core, p0, input, str));
+	panels->curnode = 0;
+	setRefreshAll (panels, false);
+	setMode (panels, PANEL_MODE_DEFAULT);
+	return 0;
+}
+
+static void splitPanelVertical(RCore *core, RPanel *p, const char *name, const char*cmd, bool cache) {
 	RPanels *panels = core->panels;
 	if (!checkPanelNum (panels)) {
 		return;
 	}
-	RPanel *cur = getCurPanel (panels);
+	insertPanel (core, panels->curnode + 1, name, cmd, cache);
 	RPanel *next = getPanel (panels, panels->curnode + 1);
-	const int owidth = cur->pos.w;
-
-	addPanelFrame (core, cur->title, cur->cmd, cur->caching);
-
-	changePanelNum (panels, panels->n_panels - 1, panels->curnode + 1);
-
-	cur->pos.w = owidth / 2 + 1;
-	next->pos.x = cur->pos.x + cur->pos.w - 1;
-	next->pos.y = cur->pos.y;
-	next->pos.w = owidth - cur->pos.w + 1;
-	next->pos.h = cur->pos.h;
+	int owidth = p->view->pos.w;
+	p->view->pos.w = owidth / 2 + 1;
+	next->view->pos.x = p->view->pos.x + p->view->pos.w - 1;
+	next->view->pos.y = p->view->pos.y;
+	next->view->pos.w = owidth - p->view->pos.w + 1;
+	next->view->pos.h = p->view->pos.h;
 	setRefreshAll (panels, false);
 }
 
-static void splitPanelHorizontal(RCore *core) {
+static void splitPanelHorizontal(RCore *core, RPanel *p, const char *name, const char*cmd, bool cache) {
 	RPanels *panels = core->panels;
 	if (!checkPanelNum (panels)) {
 		return;
 	}
-	RPanel *cur = getCurPanel (panels);
+	insertPanel (core, panels->curnode + 1, name, cmd, cache);
 	RPanel *next = getPanel (panels, panels->curnode + 1);
-	const int oheight = cur->pos.h;
-
-	cur->curpos = 0;
-	addPanelFrame (core, cur->title, cur->cmd, cur->caching);
-
-	changePanelNum (panels, panels->n_panels - 1, panels->curnode + 1);
-
-	cur->pos.h = oheight / 2 + 1;
-	next->pos.x = cur->pos.x;
-	next->pos.y = cur->pos.y + cur->pos.h - 1;
-	next->pos.w = cur->pos.w;
-	next->pos.h = oheight - cur->pos.h + 1;
+	int oheight = p->view->pos.h;
+	p->view->curpos = 0;
+	p->view->pos.h = oheight / 2 + 1;
+	next->view->pos.x = p->view->pos.x;
+	next->view->pos.y = p->view->pos.y + p->view->pos.h - 1;
+	next->view->pos.w = p->view->pos.w;
+	next->view->pos.h = oheight - p->view->pos.h + 1;
 	setRefreshAll (panels, false);
 }
 
-R_API void r_core_panels_layout_refresh(RCore *core) {
+static void panels_layout_refresh(RCore *core) {
 	fixBlockSize (core);
 	delInvalidPanels (core->panels);
 	checkEdge (core->panels);
-	r_core_panels_check_stackbase (core);
-	r_core_panels_refresh (core);
+	panels_check_stackbase (core);
+	panels_refresh (core);
 }
 
-static void changePanelNum(RPanels *panels, int now, int after) {
-	RPanel *panel = panels->panel;
-	const int n_panels = panels->n_panels;
-	int i;
-	RPanel tmpPanel = panel[now];
-	for (i = n_panels - 1; i > after; i--) {
-		panel[i] = panel[i - 1];
+static void insertPanel(RCore *core, int n, const char *name, const char *cmd, bool cache) {
+	RPanels *panels = core->panels;
+	if (panels->n_panels + 1 > PANEL_NUM_LIMIT) {
+		return;
 	}
-	panel[after] = tmpPanel;
+	RPanel **panel = panels->panel;
+	int i;
+	RPanel *last = panel[panels->n_panels];
+	for (i = panels->n_panels - 1; i >= n; i--) {
+		panel[i + 1] = panel[i];
+	}
+	panel[n] = last;
+	buildPanelParam (core, panel[n], name, cmd, cache);
 }
 
 static void setCursor(RCore *core, bool cur) {
@@ -583,9 +817,9 @@ static void setCursor(RCore *core, bool cur) {
 	RPrint *print = core->print;
 	print->cur_enabled = cur;
 	if (cur) {
-		print->cur = p->curpos;
+		print->cur = p->view->curpos;
 	} else {
-		p->curpos = print->cur;
+		p->view->curpos = print->cur;
 	}
 	print->col = print->cur_enabled ? 1: 0;
 }
@@ -593,19 +827,19 @@ static void setCursor(RCore *core, bool cur) {
 static void cursorRight(RCore *core) {
 	RPanel *cur = getCurPanel (core->panels);
 	RPrint *print = core->print;
-	if (!strcmp (cur->cmd, PANEL_CMD_STACK) && print->cur >= 15) {
+	if (!strncmp (cur->model->cmd, PANEL_CMD_STACK, strlen (PANEL_CMD_STACK)) && print->cur >= 15) {
 		return;
 	}
-	if (!strcmp (cur->cmd, PANEL_CMD_REGISTERS)
-			|| !strcmp (cur->cmd, PANEL_CMD_STACK)) {
+	if (!strncmp (cur->model->cmd, PANEL_CMD_REGISTERS, strlen (PANEL_CMD_REGISTERS))
+			|| !strncmp (cur->model->cmd, PANEL_CMD_STACK, strlen (PANEL_CMD_STACK))) {
 		print->cur++;
-		cur->addr++;
+		cur->model->addr++;
 	} else {
 		print->cur++;
 		int threshold = cursorThreshold (cur);
 		int row = r_print_row_at_off (print, print->cur);
 		if (row >= threshold) {
-			core->offset = cur->addr;
+			core->offset = cur->model->addr;
 			RAsmOp op;
 			ut32 next_roff = r_print_rowoff (print, row + 1);
 			int sz = r_asm_disassemble (core->assembler, &op,
@@ -614,7 +848,7 @@ static void cursorRight(RCore *core) {
 				sz = 1;
 			}
 			r_core_seek_delta (core, sz);
-			cur->addr = core->offset;
+			cur->model->addr = core->offset;
 			r_core_block_read (core);
 			print->cur = R_MAX (print->cur - sz, 0);
 		}
@@ -624,34 +858,51 @@ static void cursorRight(RCore *core) {
 static void activateCursor(RCore *core) {
 	RPanels *panels = core->panels;
 	RPanel *cur = getCurPanel (panels);
-	if (!strcmp (cur->cmd, PANEL_CMD_STACK)
-			|| !strcmp (cur->cmd, PANEL_CMD_REGISTERS)
-			|| !strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)
-			|| !strcmp (cur->cmd, PANEL_CMD_HEXDUMP)) {
+	if (!strncmp (cur->model->cmd, PANEL_CMD_STACK, strlen (PANEL_CMD_STACK))
+			|| !strncmp (cur->model->cmd, PANEL_CMD_REGISTERS, strlen (PANEL_CMD_REGISTERS))
+			|| (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+					strcmp (cur->model->cmd, "pdc"))
+			|| !strncmp (cur->model->cmd, PANEL_CMD_HEXDUMP, strlen (PANEL_CMD_HEXDUMP))) {
+		if (cur->model->cache) {
+			if (r_cons_yesno ('y', "You need to turn off cache to use cursor. Turn off now?(Y/n)")) {
+				cur->model->cache = false;
+				setCmdStrCache (cur, NULL);
+				cur->view->refresh = true;
+				(void)r_cons_any_key ("Cache is off and cursor is on");
+				setCursor (core, !core->print->cur_enabled);
+				cur->view->refresh = true;
+			} else {
+				(void)r_cons_any_key ("You can always toggle cache by \'&\' key");
+			}
+			return;
+		}
 		setCursor (core, !core->print->cur_enabled);
-		cur->refresh = true;
+		cur->view->refresh = true;
+	} else {
+		(void)r_cons_any_key ("Cursor is not available for the current panel.");
 	}
 }
 
 static void cursorLeft(RCore *core) {
 	RPanel *cur = getCurPanel (core->panels);
 	RPrint *print = core->print;
-	if (!strcmp (cur->cmd, PANEL_CMD_REGISTERS)
-			|| !strcmp (cur->cmd, PANEL_CMD_STACK)) {
+	if (!strncmp (cur->model->cmd, PANEL_CMD_REGISTERS, strlen (PANEL_CMD_REGISTERS))
+			|| !strncmp (cur->model->cmd, PANEL_CMD_STACK, strlen (PANEL_CMD_STACK))) {
 		if (print->cur > 0) {
 			print->cur--;
-			cur->addr--;
+			cur->model->addr--;
 		}
-	} else if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)) {
+	} else if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+					strcmp (cur->model->cmd, "pdc")) {
 		print->cur--;
 		int row = r_print_row_at_off (print, print->cur);
 		if (row < 0) {
 			int cols = print->cols;
 			ut64 prevoff = core->offset;
-			core->offset = cur->addr;
+			core->offset = cur->model->addr;
 			r_core_visual_disasm_up (core, &cols);
 			r_core_seek_delta (core, -cols);
-			cur->addr = core->offset;
+			cur->model->addr = core->offset;
 			print->cur = prevoff - core->offset - 1;
 		}
 	} else {
@@ -691,7 +942,7 @@ static void cursorUp(RCore *core) {
 			ut64 prevoff = core->offset;
 			r_core_visual_disasm_up (core, &cols);
 			r_core_seek_delta (core, -cols);
-			cur->addr = core->offset;
+			cur->model->addr = core->offset;
 			print->cur = R_MIN (prevoff - core->offset - 1, print->cur);
 		}
 	} else {
@@ -735,7 +986,7 @@ static void cursorDown(RCore *core) {
 }
 
 static int cursorThreshold(RPanel* panel) {
-	int threshold = (panel->pos.h - 4) / 2;
+	int threshold = (panel->view->pos.h - 4) / 2;
 	if (threshold < 10) {
 		threshold = 1;
 	}
@@ -751,53 +1002,132 @@ static bool handleZoomMode(RCore *core, const int key) {
 	case 0x0d:
 		toggleZoomMode (panels);
 		break;
+	case 'c':
+	case 'C':
+	case ';':
+	case ' ':
+	case 'b':
+	case 'd':
+	case 'n':
+	case 'N':
+	case 'g':
 	case 'h':
 	case 'j':
 	case 'k':
 	case 'l':
-	case 'c':
+	case 'p':
+	case 'P':
 	case 's':
 	case 'S':
-	case ':':
-	case '?':
-		return false;
+	case 't':
+	case 'T':
+	case 'x':
 	case 'X':
-		toggleZoomMode (panels);
-		delCurPanel (panels);
-		toggleZoomMode (panels);
-		break;
+	case ':':
+		return false;
 	case 9:
-		restorePanelPos (&panels->panel[panels->curnode]);
+		restorePanelPos (panels->panel[panels->curnode]);
 		handleTabKey (core, false);
-		savePanelPos (&panels->panel[panels->curnode]);
+		savePanelPos (panels->panel[panels->curnode]);
 		maximizePanelSize (panels);
 		break;
 	case 'Z':
-		restorePanelPos (&panels->panel[panels->curnode]);
+		restorePanelPos (panels->panel[panels->curnode]);
 		handleTabKey (core, true);
-		savePanelPos (&panels->panel[panels->curnode]);
+		savePanelPos (panels->panel[panels->curnode]);
 		maximizePanelSize (panels);
+		break;
+	case '?':
+		toggleZoomMode (panels);
+		toggleHelp (core);
+		toggleZoomMode (panels);
 		break;
 	}
 	return true;
 }
 
+static void handleComment(RCore *core) {
+	RPanel *p = getCurPanel (core->panels);
+	if (!strncmp (p->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+				strcmp (p->model->cmd, "pdc")) {
+		return;
+	}
+	char buf[4095];
+	int i;
+	r_line_set_prompt ("[Comment]> ");
+	strcpy (buf, "\"CC ");
+	i = strlen (buf);
+	if (r_cons_fgets (buf + i, sizeof (buf) - i - 1, 0, NULL) > 0) {
+		ut64 addr, orig;
+		addr = orig = core->offset;
+		if (core->print->cur_enabled) {
+			addr += core->print->cur;
+			r_core_seek (core, addr, 0);
+			r_core_cmdf (core, "s 0x%"PFMT64x, addr);
+		}
+		if (!strcmp (buf + i, "-")) {
+			strcpy (buf, "CC-");
+		} else {
+			switch (buf[i]) {
+				case '-':
+					memcpy (buf, "\"CC-\x00", 5);
+					break;
+				case '!':
+					memcpy (buf, "\"CC!\x00", 5);
+					break;
+				default:
+					memcpy (buf, "\"CC ", 4);
+					break;
+			}
+			strcat (buf, "\"");
+		}
+		if (buf[3] == ' ') {
+			int j, len = strlen (buf);
+			char *duped = strdup (buf);
+			for (i = 4, j = 4; i < len; ++i,++j) {
+				char c = duped[i];
+				if (c == '"' && i != (len - 1)) {
+					buf[j] = '\\';
+					j++;
+					buf[j] = '"';
+				} else {
+					buf[j] = c;
+				}
+			}
+			free (duped);
+		}
+		r_core_cmd (core, buf, 1);
+		if (core->print->cur_enabled) {
+			r_core_seek (core, orig, 1);
+		}
+	}
+	setRefreshByType (core->panels, p->model->cmd, true);
+}
+
 static bool handleWindowMode(RCore *core, const int key) {
 	RPanels *panels = core->panels;
+	RPanel *cur = getCurPanel (panels);
 	r_cons_switchbuf (false);
 	switch (key) {
 	case 'Q':
 	case 'q':
+	case 'w':
 		toggleWindowMode (panels);
 		break;
 	case 0x0d:
 		toggleZoomMode (panels);
 		break;
+	case 9: // tab
+		handleTabKey (core, false);
+		break;
+	case 'Z': // shift-tab
+		handleTabKey (core, true);
+		break;
 	case 'h':
 		if (moveToDirection (panels, LEFT)) {
 			setRefreshAll (panels, false);
 		}
-		if (panels->fun == PANEL_FUN_SNOW) {
+		if (panels->fun == PANEL_FUN_SNOW || panels->fun == PANEL_FUN_SAKURA) {
 			resetSnow (panels);
 		}
 		break;
@@ -805,7 +1135,7 @@ static bool handleWindowMode(RCore *core, const int key) {
 		if (moveToDirection (panels, DOWN)) {
 			setRefreshAll (panels, false);
 		}
-		if (panels->fun == PANEL_FUN_SNOW) {
+		if (panels->fun == PANEL_FUN_SNOW || panels->fun == PANEL_FUN_SAKURA) {
 			resetSnow (panels);
 		}
 		break;
@@ -813,7 +1143,7 @@ static bool handleWindowMode(RCore *core, const int key) {
 		if (moveToDirection (panels, UP)) {
 			setRefreshAll (panels, false);
 		}
-		if (panels->fun == PANEL_FUN_SNOW) {
+		if (panels->fun == PANEL_FUN_SNOW || panels->fun == PANEL_FUN_SAKURA) {
 			resetSnow (panels);
 		}
 		break;
@@ -821,7 +1151,7 @@ static bool handleWindowMode(RCore *core, const int key) {
 		if (moveToDirection (panels, RIGHT)) {
 			setRefreshAll (panels, false);
 		}
-		if (panels->fun == PANEL_FUN_SNOW) {
+		if (panels->fun == PANEL_FUN_SNOW || panels->fun == PANEL_FUN_SAKURA) {
 			resetSnow (panels);
 		}
 		break;
@@ -841,7 +1171,27 @@ static bool handleWindowMode(RCore *core, const int key) {
 		r_cons_switchbuf (false);
 		resizePanelUp (panels);
 		break;
+	case 'n':
+		createNewPanel (core, true);
+		break;
+	case 'N':
+		createNewPanel (core, false);
+		break;
+	case 'X':
+		dismantleDelPanel (panels, cur, panels->curnode);
+		setRefreshAll (panels, false);
+		break;
+	case ':':
+	case ';':
+	case 'd':
+	case 'b':
+	case 'p':
+	case 'P':
+	case 't':
+	case 'T':
 	case '?':
+	case '|':
+	case '-':
 		return false;
 	}
 	return true;
@@ -851,6 +1201,10 @@ static bool handleCursorMode(RCore *core, const int key) {
 	RPanel *cur = getCurPanel (core->panels);
 	RPrint *print = core->print;
 	switch (key) {
+	case ':':
+	case ';':
+	case 'd':
+	case 'b':
 	case 'h':
 	case 'j':
 	case 'k':
@@ -858,17 +1212,24 @@ static bool handleCursorMode(RCore *core, const int key) {
 		return false;
 	case 'Q':
 	case 'q':
+	case 'c':
 		setCursor (core, !print->cur_enabled);
-		cur->refresh = true;
+		cur->view->refresh = true;
+		break;
+	case 'w':
+		toggleWindowMode (core->panels);
+		setCursor (core, !print->cur_enabled);
+		cur->view->refresh = true;
 		break;
 	case 'i':
 		insertValue (core);
 		break;
 	case '*':
-		if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)) {
+		if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+					strcmp (cur->model->cmd, "pdc")) {
 			r_core_cmdf (core, "dr PC=0x%08"PFMT64x, core->offset + print->cur);
-			cur->addr = core->offset + print->cur;
-			cur->refresh = true;
+			cur->model->addr = core->offset + print->cur;
+			cur->view->refresh = true;
 		}
 		break;
 	}
@@ -877,13 +1238,16 @@ static bool handleCursorMode(RCore *core, const int key) {
 
 static void resizePanelLeft(RPanels *panels) {
 	RPanel *cur = getCurPanel (panels);
-	int i, cx0, cy0, cy1, tx0, tx1, ty0, ty1, cur1 = 0, cur2 = 0;
-	cx0 = cur->pos.x;
-	cy0 = cur->pos.y;
-	cy1 = cur->pos.y + cur->pos.h - 1;
+	int i, cx0, cx1, cy0, cy1, tx0, tx1, ty0, ty1, cur1 = 0, cur2 = 0, cur3 = 0, cur4 = 0;
+	cx0 = cur->view->pos.x;
+	cx1 = cur->view->pos.x + cur->view->pos.w - 1;
+	cy0 = cur->view->pos.y;
+	cy1 = cur->view->pos.y + cur->view->pos.h - 1;
 	RPanel **targets1 = malloc (sizeof (RPanel *) * panels->n_panels);
 	RPanel **targets2 = malloc (sizeof (RPanel *) * panels->n_panels);
-	if (!targets1 || !targets2) {
+	RPanel **targets3 = malloc (sizeof (RPanel *) * panels->n_panels);
+	RPanel **targets4 = malloc (sizeof (RPanel *) * panels->n_panels);
+	if (!targets1 || !targets2 || !targets3 || !targets4) {
 		goto beach;
 	}
 	for (i = 0; i < panels->n_panels; i++) {
@@ -891,61 +1255,85 @@ static void resizePanelLeft(RPanels *panels) {
 			continue;
 		}
 		RPanel *p = getPanel (panels, i);
-		tx0 = p->pos.x;
-		tx1 = p->pos.x + p->pos.w - 1;
-		ty0 = p->pos.y;
-		ty1 = p->pos.y + p->pos.h - 1;
-		if (ty0 == cy0 && ty1 == cy1 && tx1 == cx0) {
-			if (tx1 - PANEL_CONFIG_RESIZE_W > tx0) {
-				p->pos.w -= PANEL_CONFIG_RESIZE_W;
-				cur->pos.x -= PANEL_CONFIG_RESIZE_W;
-				cur->pos.w += PANEL_CONFIG_RESIZE_W;
-				p->refresh = true;
-				cur->refresh = true;
-			}
+		tx0 = p->view->pos.x;
+		tx1 = p->view->pos.x + p->view->pos.w - 1;
+		ty0 = p->view->pos.y;
+		ty1 = p->view->pos.y + p->view->pos.h - 1;
+		if (ty0 == cy0 && ty1 == cy1 && tx1 == cx0 && tx1 - PANEL_CONFIG_RESIZE_W > tx0) {
+			p->view->pos.w -= PANEL_CONFIG_RESIZE_W;
+			cur->view->pos.x -= PANEL_CONFIG_RESIZE_W;
+			cur->view->pos.w += PANEL_CONFIG_RESIZE_W;
+			p->view->refresh = true;
+			cur->view->refresh = true;
 			goto beach;
 		}
-		if (tx1 == cx0) {
-			if (tx1 - PANEL_CONFIG_RESIZE_W <= tx0) {
-				goto beach;
+		bool y_included =  (ty1 >= cy0 && cy1 >= ty1) || (ty0 >= cy0 && cy1 >= ty0);
+		if (tx1 == cx0 && y_included) {
+			if (tx1 - PANEL_CONFIG_RESIZE_W > tx0) {
+				targets1[cur1++] = p;
 			}
-			targets1[cur1++] = p;
+		}
+		if (tx0 == cx1 && y_included) {
+			if (tx0 - PANEL_CONFIG_RESIZE_W > cx0) {
+				targets3[cur3++] = p;
+			}
 		}
 		if (tx0 == cx0) {
-			if (tx0 - PANEL_CONFIG_RESIZE_W <= 0) {
-				goto beach;
+			if (tx0 - PANEL_CONFIG_RESIZE_W > 0) {
+				targets2[cur2++] = p;
 			}
-			targets2[cur2++] = p;
+		}
+		if (tx1 == cx1) {
+			if (tx1 + PANEL_CONFIG_RESIZE_W < panels->can->w) {
+				targets4[cur4++] = p;
+			}
 		}
 	}
 	if (cur1 > 0) {
 		for (i = 0; i < cur1; i++) {
-			targets1[i]->pos.w -= PANEL_CONFIG_RESIZE_W;
-			targets1[i]->refresh = true;
+			targets1[i]->view->pos.w -= PANEL_CONFIG_RESIZE_W;
+			targets1[i]->view->refresh = true;
 		}
 		for (i = 0; i < cur2; i++) {
-			targets2[i]->pos.x -= PANEL_CONFIG_RESIZE_W;
-			targets2[i]->pos.w += PANEL_CONFIG_RESIZE_W;
-			targets2[i]->refresh = true;
+			targets2[i]->view->pos.x -= PANEL_CONFIG_RESIZE_W;
+			targets2[i]->view->pos.w += PANEL_CONFIG_RESIZE_W;
+			targets2[i]->view->refresh = true;
 		}
-		cur->pos.x -= PANEL_CONFIG_RESIZE_W;
-		cur->pos.w += PANEL_CONFIG_RESIZE_W;
-		cur->refresh = true;
+		cur->view->pos.x -= PANEL_CONFIG_RESIZE_W;
+		cur->view->pos.w += PANEL_CONFIG_RESIZE_W;
+		cur->view->refresh = true;
+	} else if (cur3 > 0) {
+		for (i = 0; i < cur3; i++) {
+			targets3[i]->view->pos.w += PANEL_CONFIG_RESIZE_W;
+			targets3[i]->view->pos.x -= PANEL_CONFIG_RESIZE_W;
+			targets3[i]->view->refresh = true;
+		}
+		for (i = 0; i < cur4; i++) {
+			targets4[i]->view->pos.w -= PANEL_CONFIG_RESIZE_W;
+			targets4[i]->view->refresh = true;
+		}
+		cur->view->pos.w -= PANEL_CONFIG_RESIZE_W;
+		cur->view->refresh = true;
 	}
 beach:
 	free (targets1);
 	free (targets2);
+	free (targets3);
+	free (targets4);
 }
 
 static void resizePanelRight(RPanels *panels) {
 	RPanel *cur = getCurPanel (panels);
-	int i, tx0, tx1, ty0, ty1, cur1 = 0, cur2 = 0;
-	int cx1 = cur->pos.x + cur->pos.w - 1;
-	int cy0 = cur->pos.y;
-	int cy1 = cur->pos.y + cur->pos.h - 1;
+	int i, tx0, tx1, ty0, ty1, cur1 = 0, cur2 = 0, cur3 = 0, cur4 = 0;
+	int cx0 = cur->view->pos.x;
+	int cx1 = cur->view->pos.x + cur->view->pos.w - 1;
+	int cy0 = cur->view->pos.y;
+	int cy1 = cur->view->pos.y + cur->view->pos.h - 1;
 	RPanel **targets1 = malloc (sizeof (RPanel *) * panels->n_panels);
 	RPanel **targets2 = malloc (sizeof (RPanel *) * panels->n_panels);
-	if (!targets1 || !targets2) {
+	RPanel **targets3 = malloc (sizeof (RPanel *) * panels->n_panels);
+	RPanel **targets4 = malloc (sizeof (RPanel *) * panels->n_panels);
+	if (!targets1 || !targets2 || !targets3 || !targets4) {
 		goto beach;
 	}
 	for (i = 0; i < panels->n_panels; i++) {
@@ -953,61 +1341,85 @@ static void resizePanelRight(RPanels *panels) {
 			continue;
 		}
 		RPanel *p = getPanel (panels, i);
-		tx0 = p->pos.x;
-		tx1 = p->pos.x + p->pos.w - 1;
-		ty0 = p->pos.y;
-		ty1 = p->pos.y + p->pos.h - 1;
-		if (ty0 == cy0 && ty1 == cy1 && tx0 == cx1) {
-			if (cx1 + PANEL_CONFIG_RESIZE_W < tx1) {
-				p->pos.x += PANEL_CONFIG_RESIZE_W;
-				p->pos.w -= PANEL_CONFIG_RESIZE_W;
-				cur->pos.w += PANEL_CONFIG_RESIZE_W;
-				p->refresh = true;
-				cur->refresh = true;
-			}
+		tx0 = p->view->pos.x;
+		tx1 = p->view->pos.x + p->view->pos.w - 1;
+		ty0 = p->view->pos.y;
+		ty1 = p->view->pos.y + p->view->pos.h - 1;
+		if (ty0 == cy0 && ty1 == cy1 && tx0 == cx1 && tx0 + PANEL_CONFIG_RESIZE_W < tx1) {
+			p->view->pos.x += PANEL_CONFIG_RESIZE_W;
+			p->view->pos.w -= PANEL_CONFIG_RESIZE_W;
+			cur->view->pos.w += PANEL_CONFIG_RESIZE_W;
+			p->view->refresh = true;
+			cur->view->refresh = true;
 			goto beach;
 		}
-		if (tx0 == cx1) {
-			if (tx0 + PANEL_CONFIG_RESIZE_W >= tx1) {
-				goto beach;
+		bool y_included =  (ty1 >= cy0 && cy1 >= ty1) || (ty0 >= cy0 && cy1 >= ty0);
+		if (tx1 == cx0 && y_included) {
+			if (tx1 + PANEL_CONFIG_RESIZE_W < cx1) {
+				targets1[cur1++] = p;
 			}
-			targets1[cur1++] = p;
-			continue;
+		}
+		if (tx0 == cx1 && y_included) {
+			if (tx0 + PANEL_CONFIG_RESIZE_W < tx1) {
+				targets3[cur3++] = p;
+			}
+		}
+		if (tx0 == cx0) {
+			if (tx0 + PANEL_CONFIG_RESIZE_W < tx1) {
+				targets2[cur2++] = p;
+			}
 		}
 		if (tx1 == cx1) {
-			if (tx1 + PANEL_CONFIG_RESIZE_W >= panels->can->w) {
-				goto beach;
+			if (tx1 + PANEL_CONFIG_RESIZE_W < panels->can->w) {
+				targets4[cur4++] = p;
 			}
-			targets2[cur2++] = p;
 		}
 	}
-	if (cur1 > 0) {
+	if (cur3 > 0) {
+		for (i = 0; i < cur3; i++) {
+			targets3[i]->view->pos.x += PANEL_CONFIG_RESIZE_W;
+			targets3[i]->view->pos.w -= PANEL_CONFIG_RESIZE_W;
+			targets3[i]->view->refresh = true;
+		}
+		for (i = 0; i < cur4; i++) {
+			targets4[i]->view->pos.w += PANEL_CONFIG_RESIZE_W;
+			targets4[i]->view->refresh = true;
+		}
+		cur->view->pos.w += PANEL_CONFIG_RESIZE_W;
+		cur->view->refresh = true;
+	} else if (cur1 > 0) {
 		for (i = 0; i < cur1; i++) {
-			targets1[i]->pos.x += PANEL_CONFIG_RESIZE_W;
-			targets1[i]->pos.w -= PANEL_CONFIG_RESIZE_W;
-			targets1[i]->refresh = true;
+			targets1[i]->view->pos.w += PANEL_CONFIG_RESIZE_W;
+			targets1[i]->view->refresh = true;
 		}
 		for (i = 0; i < cur2; i++) {
-			targets2[i]->pos.w += PANEL_CONFIG_RESIZE_W;
-			targets2[i]->refresh = true;
+			targets2[i]->view->pos.x += PANEL_CONFIG_RESIZE_W;
+			targets2[i]->view->pos.w -= PANEL_CONFIG_RESIZE_W;
+			targets2[i]->view->refresh = true;
 		}
-		cur->pos.w += PANEL_CONFIG_RESIZE_W;
-		cur->refresh = true;
+		cur->view->pos.x += PANEL_CONFIG_RESIZE_W;
+		cur->view->pos.w -= PANEL_CONFIG_RESIZE_W;
+		cur->view->refresh = true;
 	}
 beach:
 	free (targets1);
 	free (targets2);
+	free (targets3);
+	free (targets4);
 }
 
 static void resizePanelUp(RPanels *panels) {
 	RPanel *cur = getCurPanel (panels);
-	int i, tx0, tx1, ty0, ty1, cur1 = 0, cur2 = 0;
-	int cx0 = cur->pos.x;
-	int cx1 = cur->pos.x + cur->pos.w - 1;
-	int cy0 = cur->pos.y;
+	int i, tx0, tx1, ty0, ty1, cur1 = 0, cur2 = 0, cur3 = 0, cur4 = 0;
+	int cx0 = cur->view->pos.x;
+	int cx1 = cur->view->pos.x + cur->view->pos.w - 1;
+	int cy0 = cur->view->pos.y;
+	int cy1 = cur->view->pos.y + cur->view->pos.h - 1;
 	RPanel **targets1 = malloc (sizeof (RPanel *) * panels->n_panels);
 	RPanel **targets2 = malloc (sizeof (RPanel *) * panels->n_panels);
-	if (!targets1 || !targets2) {
+	RPanel **targets3 = malloc (sizeof (RPanel *) * panels->n_panels);
+	RPanel **targets4 = malloc (sizeof (RPanel *) * panels->n_panels);
+	if (!targets1 || !targets2 || !targets3 || !targets4) {
 		goto beach;
 	}
 	for (i = 0; i < panels->n_panels; i++) {
@@ -1015,119 +1427,165 @@ static void resizePanelUp(RPanels *panels) {
 			continue;
 		}
 		RPanel *p = getPanel (panels, i);
-		tx0 = p->pos.x;
-		tx1 = p->pos.x + p->pos.w - 1;
-		ty0 = p->pos.y;
-		ty1 = p->pos.y + p->pos.h - 1;
-		if (tx0 == cx0 && tx1 == cx1 && ty1 == cy0) {
-			if (ty1 - PANEL_CONFIG_RESIZE_H > ty0) {
-				p->pos.h -= PANEL_CONFIG_RESIZE_H;
-				cur->pos.y -= PANEL_CONFIG_RESIZE_H;
-				cur->pos.h += PANEL_CONFIG_RESIZE_H;
-				p->refresh = true;
-				cur->refresh = true;
-			}
+		tx0 = p->view->pos.x;
+		tx1 = p->view->pos.x + p->view->pos.w - 1;
+		ty0 = p->view->pos.y;
+		ty1 = p->view->pos.y + p->view->pos.h - 1;
+		if (tx0 == cx0 && tx1 == cx1 && ty1 == cy0 && ty1 - PANEL_CONFIG_RESIZE_H > ty0) {
+			p->view->pos.h -= PANEL_CONFIG_RESIZE_H;
+			cur->view->pos.y -= PANEL_CONFIG_RESIZE_H;
+			cur->view->pos.h += PANEL_CONFIG_RESIZE_H;
+			p->view->refresh = true;
+			cur->view->refresh = true;
 			goto beach;
 		}
-		if (ty1 == cy0) {
-			if (ty1 - PANEL_CONFIG_RESIZE_H <= ty0) {
-				goto beach;
+		bool x_included =  (tx1 >= cx0 && cx1 >= tx1) || (tx0 >= cx0 && cx1 >= tx0);
+		if (ty1 == cy0 && x_included) {
+			if (ty1 - PANEL_CONFIG_RESIZE_H > ty0) {
+				targets1[cur1++] = p;
 			}
-			targets1[cur1++] = p;
+		}
+		if (ty0 == cy1 && x_included) {
+			if (ty0 - PANEL_CONFIG_RESIZE_H > cy0) {
+				targets3[cur3++] = p;
+			}
 		}
 		if (ty0 == cy0) {
-			if (ty0 - PANEL_CONFIG_RESIZE_H <= 0) {
-				goto beach;
+			if (ty0 - PANEL_CONFIG_RESIZE_H > 0) {
+				targets2[cur2++] = p;
 			}
-			targets2[cur2++] = p;
-		}
-	}
-	if (cur1) {
-		for (i = 0; i < cur1; i++) {
-			targets1[i]->pos.h -= PANEL_CONFIG_RESIZE_H;
-			targets1[i]->refresh = true;
-		}
-		for (i = 0; i < cur2; i++) {
-			targets2[i]->pos.y -= PANEL_CONFIG_RESIZE_H;
-			targets2[i]->pos.h += PANEL_CONFIG_RESIZE_H;
-			targets2[i]->refresh = true;
-		}
-		cur->refresh = true;
-		cur->pos.y -= PANEL_CONFIG_RESIZE_H;
-		cur->pos.h += PANEL_CONFIG_RESIZE_H;
-	}
-beach:
-	free (targets1);
-	free (targets2);
-}
-
-static void resizePanelDown(RPanels *panels) {
-	RPanel *cur = getCurPanel (panels);
-	int i, tx0, tx1, ty0, ty1, cur1 = 0, cur2 = 0;
-	int cx0 = cur->pos.x;
-	int cx1 = cur->pos.x + cur->pos.w - 1;
-	int cy1 = cur->pos.y + cur->pos.h - 1;
-	RPanel **targets1 = malloc (sizeof (RPanel *) * panels->n_panels);
-	RPanel **targets2 = malloc (sizeof (RPanel *) * panels->n_panels);
-	if (!targets1 || !targets2) {
-		goto beach;
-	}
-	for (i = 0; i < panels->n_panels; i++) {
-		if (i == panels->curnode) {
-			continue;
-		}
-		RPanel *p = getPanel (panels, i);
-		tx0 = p->pos.x;
-		tx1 = p->pos.x + p->pos.w - 1;
-		ty0 = p->pos.y;
-		ty1 = p->pos.y + p->pos.h - 1;
-		if (tx0 == cx0 && tx1 == cx1 && ty0 == cy1) {
-			if (ty0 + PANEL_CONFIG_RESIZE_H < ty1) {
-				p->pos.y += PANEL_CONFIG_RESIZE_H;
-				p->pos.h -= PANEL_CONFIG_RESIZE_H;
-				cur->pos.h += PANEL_CONFIG_RESIZE_H;
-				p->refresh = true;
-				cur->refresh = true;
-			}
-			goto beach;
-		}
-		if (ty0 == cy1) {
-			if (ty0 + PANEL_CONFIG_RESIZE_H >= ty1) {
-				goto beach;
-			}
-			targets1[cur1++] = p;
 		}
 		if (ty1 == cy1) {
-			if (ty1 + PANEL_CONFIG_RESIZE_H >= panels->can->h) {
-				goto beach;
+			if (ty1 - PANEL_CONFIG_RESIZE_H > ty0) {
+				targets4[cur4++] = p;
 			}
-			targets2[cur2++] = p;
 		}
 	}
 	if (cur1 > 0) {
 		for (i = 0; i < cur1; i++) {
-			targets1[i]->pos.y += PANEL_CONFIG_RESIZE_H;
-			targets1[i]->pos.h -= PANEL_CONFIG_RESIZE_H;
-			targets1[i]->refresh = true;
+			targets1[i]->view->pos.h -= PANEL_CONFIG_RESIZE_H;
+			targets1[i]->view->refresh = true;
 		}
 		for (i = 0; i < cur2; i++) {
-			targets2[i]->pos.h += PANEL_CONFIG_RESIZE_H;
-			targets2[i]->refresh = true;
+			targets2[i]->view->pos.y -= PANEL_CONFIG_RESIZE_H;
+			targets2[i]->view->pos.h += PANEL_CONFIG_RESIZE_H;
+			targets2[i]->view->refresh = true;
 		}
-		cur->pos.h += PANEL_CONFIG_RESIZE_H;
-		cur->refresh = true;
+		cur->view->pos.y -= PANEL_CONFIG_RESIZE_H;
+		cur->view->pos.h += PANEL_CONFIG_RESIZE_H;
+		cur->view->refresh = true;
+	} else if (cur3 > 0) {
+		for (i = 0; i < cur3; i++) {
+			targets3[i]->view->pos.h += PANEL_CONFIG_RESIZE_H;
+			targets3[i]->view->pos.y -= PANEL_CONFIG_RESIZE_H;
+			targets3[i]->view->refresh = true;
+		}
+		for (i = 0; i < cur4; i++) {
+			targets4[i]->view->pos.h -= PANEL_CONFIG_RESIZE_H;
+			targets4[i]->view->refresh = true;
+		}
+		cur->view->pos.h -= PANEL_CONFIG_RESIZE_H;
+		cur->view->refresh = true;
 	}
 beach:
 	free (targets1);
 	free (targets2);
+	free (targets3);
+	free (targets4);
+}
+
+static void resizePanelDown(RPanels *panels) {
+	RPanel *cur = getCurPanel (panels);
+	int i, tx0, tx1, ty0, ty1, cur1 = 0, cur2 = 0, cur3 = 0, cur4 = 0;
+	int cx0 = cur->view->pos.x;
+	int cx1 = cur->view->pos.x + cur->view->pos.w - 1;
+	int cy0 = cur->view->pos.y;
+	int cy1 = cur->view->pos.y + cur->view->pos.h - 1;
+	RPanel **targets1 = malloc (sizeof (RPanel *) * panels->n_panels);
+	RPanel **targets2 = malloc (sizeof (RPanel *) * panels->n_panels);
+	RPanel **targets3 = malloc (sizeof (RPanel *) * panels->n_panels);
+	RPanel **targets4 = malloc (sizeof (RPanel *) * panels->n_panels);
+	if (!targets1 || !targets2 || !targets3 || !targets4) {
+		goto beach;
+	}
+	for (i = 0; i < panels->n_panels; i++) {
+		if (i == panels->curnode) {
+			continue;
+		}
+		RPanel *p = getPanel (panels, i);
+		tx0 = p->view->pos.x;
+		tx1 = p->view->pos.x + p->view->pos.w - 1;
+		ty0 = p->view->pos.y;
+		ty1 = p->view->pos.y + p->view->pos.h - 1;
+		if (tx0 == cx0 && tx1 == cx1 && ty0 == cy1 && ty0 + PANEL_CONFIG_RESIZE_H < ty1) {
+			p->view->pos.y += PANEL_CONFIG_RESIZE_H;
+			p->view->pos.h -= PANEL_CONFIG_RESIZE_H;
+			cur->view->pos.h += PANEL_CONFIG_RESIZE_H;
+			p->view->refresh = true;
+			cur->view->refresh = true;
+			goto beach;
+		}
+		bool x_included =  (tx1 >= cx0 && cx1 >= tx1) || (tx0 >= cx0 && cx1 >= tx0);
+		if (ty1 == cy0 && x_included) {
+			if (ty1 + PANEL_CONFIG_RESIZE_H < cy1) {
+				targets1[cur1++] = p;
+			}
+		}
+		if (ty0 == cy1 && x_included) {
+			if (ty0 + PANEL_CONFIG_RESIZE_H < ty1) {
+				targets3[cur3++] = p;
+			}
+		}
+		if (ty0 == cy0) {
+			if (ty0 + PANEL_CONFIG_RESIZE_H < ty1) {
+				targets2[cur2++] = p;
+			}
+		}
+		if (ty1 == cy1) {
+			if (ty1 + PANEL_CONFIG_RESIZE_H < panels->can->h) {
+				targets4[cur4++] = p;
+			}
+		}
+	}
+	if (cur3 > 0) {
+		for (i = 0; i < cur3; i++) {
+			targets3[i]->view->pos.h -= PANEL_CONFIG_RESIZE_H;
+			targets3[i]->view->pos.y += PANEL_CONFIG_RESIZE_H;
+			targets3[i]->view->refresh = true;
+		}
+		for (i = 0; i < cur4; i++) {
+			targets4[i]->view->pos.h += PANEL_CONFIG_RESIZE_H;
+			targets4[i]->view->refresh = true;
+		}
+		cur->view->pos.h += PANEL_CONFIG_RESIZE_H;
+		cur->view->refresh = true;
+	} else if (cur1 > 0) {
+		for (i = 0; i < cur1; i++) {
+			targets1[i]->view->pos.h += PANEL_CONFIG_RESIZE_H;
+			targets1[i]->view->refresh = true;
+		}
+		for (i = 0; i < cur2; i++) {
+			targets2[i]->view->pos.y += PANEL_CONFIG_RESIZE_H;
+			targets2[i]->view->pos.h -= PANEL_CONFIG_RESIZE_H;
+			targets2[i]->view->refresh = true;
+		}
+		cur->view->pos.y += PANEL_CONFIG_RESIZE_H;
+		cur->view->pos.h -= PANEL_CONFIG_RESIZE_H;
+		cur->view->refresh = true;
+	}
+beach:
+	free (targets1);
+	free (targets2);
+	free (targets3);
+	free (targets4);
 }
 
 static void checkEdge(RPanels *panels) {
 	int i, tmpright, tmpbottom, maxright = 0, maxbottom = 0;
 	for (i = 0; i < panels->n_panels; i++) {
 		RPanel *panel = getPanel (panels, i);
-		tmpright = panel->pos.x + panel->pos.w;
-		tmpbottom = panel->pos.y + panel->pos.h;
+		tmpright = panel->view->pos.x + panel->view->pos.w;
+		tmpbottom = panel->view->pos.y + panel->view->pos.h;
 		if (tmpright > maxright) {
 			maxright = tmpright;
 		}
@@ -1139,13 +1597,13 @@ static void checkEdge(RPanels *panels) {
 	for (i = 0; i < panels->n_panels; i++) {
 		RPanel *panel = getPanel (panels, i);
 		f1 = f2 = 0;
-		if (panel->pos.x + panel->pos.w == maxright) {
+		if (panel->view->pos.x + panel->view->pos.w == maxright) {
 			f1 = (1 << PANEL_EDGE_RIGHT);
 		}
-		if (panel->pos.y + panel->pos.h == maxbottom) {
+		if (panel->view->pos.y + panel->view->pos.h == maxbottom) {
 			f2 = (1 << PANEL_EDGE_BOTTOM);
 		}
-		panel->edgeflag = f1 | f2;
+		panel->view->edgeflag = f1 | f2;
 	}
 }
 
@@ -1154,41 +1612,43 @@ static void fitToCanvas(RPanels *panels) {
 	int i, w, h;
 	for (i = 0; i < panels->n_panels; i++) {
 		RPanel *panel = getPanel (panels, i);
-		if (panel->edgeflag & 1 << PANEL_EDGE_RIGHT && panel->pos.x < can->w) {
-			w = can->w - panel->pos.x;
-			if (w != panel->pos.w) {
-				panel->pos.w = w;
-				panel->refresh = true;
+		if (panel->view->edgeflag & 1 << PANEL_EDGE_RIGHT && panel->view->pos.x < can->w) {
+			w = can->w - panel->view->pos.x;
+			if (w != panel->view->pos.w) {
+				panel->view->pos.w = w;
+				panel->view->refresh = true;
 			}
 		}
-		if (panel->edgeflag & 1 << PANEL_EDGE_BOTTOM && panel->pos.y < can->h) {
-			h = can->h - panel->pos.y;
-			if (h != panel->pos.h) {
-				panel->pos.h = h;
-				panel->refresh = true;
+		if (panel->view->edgeflag & 1 << PANEL_EDGE_BOTTOM && panel->view->pos.y < can->h) {
+			h = can->h - panel->view->pos.y;
+			if (h != panel->view->pos.h) {
+				panel->view->pos.h = h;
+				panel->view->refresh = true;
 			}
 		}
 	}
 }
 
-static void delPanel(RPanels *panels, int delPanelNum) {
+static void delPanel(RPanels *ps, int pi) {
+	//TODO use getPanel
 	int i;
-	for (i = delPanelNum; i < (panels->n_panels - 1); i++) {
-		panels->panel[i] = panels->panel[i + 1];
+	RPanel *tmp = getPanel (ps, pi);
+	for (i = pi; i < (ps->n_panels - 1); i++) {
+		ps->panel[i] = ps->panel[i + 1];
 	}
-	panels->panel[i].title = 0;
-	panels->n_panels--;
-	if (panels->curnode >= panels->n_panels) {
-		panels->curnode = panels->n_panels - 1;
+	ps->panel[ps->n_panels - 1] = tmp;
+	ps->n_panels--;
+	if (ps->curnode >= ps->n_panels) {
+		ps->curnode = ps->n_panels - 1;
 	}
 }
 
-static void delCurPanel(RPanels *panels) {
-	if (panels->n_panels <= 2) {
+static void dismantleDelPanel(RPanels *ps, RPanel *p, int pi) {
+	if (ps->n_panels <= 1) {
 		return;
 	}
-	dismantlePanel (panels);
-	delPanel (panels, panels->curnode);
+	dismantlePanel (ps, p);
+	delPanel (ps, pi);
 }
 
 static void fixBlockSize(RCore *core) {
@@ -1200,12 +1660,12 @@ static void delInvalidPanels(RPanels *panels) {
 	int i;
 	for (i = 1; i < panels->n_panels; i++) {
 		RPanel *panel = getPanel (panels, i);
-		if (panel->pos.w < 2) {
+		if (panel->view->pos.w < 2) {
 			delPanel (panels, i);
 			delInvalidPanels (panels);
 			break;
 		}
-		if (panel->pos.h < 2) {
+		if (panel->view->pos.h < 2) {
 			delPanel (panels, i);
 			delInvalidPanels (panels);
 			break;
@@ -1213,8 +1673,7 @@ static void delInvalidPanels(RPanels *panels) {
 	}
 }
 
-static void dismantlePanel(RPanels *panels) {
-	RPanel *cur = getCurPanel (panels);
+static void dismantlePanel(RPanels *ps, RPanel *p) {
 	RPanel *justLeftPanel = NULL, *justRightPanel = NULL, *justUpPanel = NULL, *justDownPanel = NULL;
 	RPanel *tmpPanel = NULL;
 	bool leftUpValid = false, leftDownValid = false, rightUpValid = false, rightDownValid = false,
@@ -1225,141 +1684,131 @@ static void dismantlePanel(RPanels *panels) {
 	memset (up, -1, sizeof (up));
 	memset (down, -1, sizeof (down));
 	int i, ox, oy, ow, oh;
-	ox = cur->pos.x;
-	oy = cur->pos.y;
-	ow = cur->pos.w;
-	oh = cur->pos.h;
-	for (i = 0; i < panels->n_panels; i++) {
-		tmpPanel = getPanel (panels, i);
-		if (tmpPanel->pos.x + tmpPanel->pos.w - 1 == ox) {
+	ox = p->view->pos.x;
+	oy = p->view->pos.y;
+	ow = p->view->pos.w;
+	oh = p->view->pos.h;
+	for (i = 0; i < ps->n_panels; i++) {
+		tmpPanel = getPanel (ps, i);
+		if (tmpPanel->view->pos.x + tmpPanel->view->pos.w - 1 == ox) {
 			left[i] = 1;
-			if (oy == tmpPanel->pos.y) {
+			if (oy == tmpPanel->view->pos.y) {
 				leftUpValid = true;
-				if (oh == tmpPanel->pos.h) {
+				if (oh == tmpPanel->view->pos.h) {
 					justLeftPanel = tmpPanel;
 					break;
 				}
 			}
-			if (oy + oh == tmpPanel->pos.y + tmpPanel->pos.h) {
+			if (oy + oh == tmpPanel->view->pos.y + tmpPanel->view->pos.h) {
 				leftDownValid = true;
 			}
 		}
-		if (tmpPanel->pos.x == ox + ow - 1) {
+		if (tmpPanel->view->pos.x == ox + ow - 1) {
 			right[i] = 1;
-			if (oy == tmpPanel->pos.y) {
+			if (oy == tmpPanel->view->pos.y) {
 				rightUpValid = true;
-				if (oh == tmpPanel->pos.h) {
+				if (oh == tmpPanel->view->pos.h) {
 					rightDownValid = true;
 					justRightPanel = tmpPanel;
 				}
 			}
-			if (oy + oh == tmpPanel->pos.y + tmpPanel->pos.h) {
+			if (oy + oh == tmpPanel->view->pos.y + tmpPanel->view->pos.h) {
 				rightDownValid = true;
 			}
 		}
-		if (tmpPanel->pos.y + tmpPanel->pos.h - 1 == oy) {
+		if (tmpPanel->view->pos.y + tmpPanel->view->pos.h - 1 == oy) {
 			up[i] = 1;
-			if (ox == tmpPanel->pos.x) {
+			if (ox == tmpPanel->view->pos.x) {
 				upLeftValid = true;
-				if (ow == tmpPanel->pos.w) {
+				if (ow == tmpPanel->view->pos.w) {
 					upRightValid = true;
 					justUpPanel = tmpPanel;
 				}
 			}
-			if (ox + ow == tmpPanel->pos.x + tmpPanel->pos.w) {
+			if (ox + ow == tmpPanel->view->pos.x + tmpPanel->view->pos.w) {
 				upRightValid = true;
 			}
 		}
-		if (tmpPanel->pos.y == oy + oh - 1) {
+		if (tmpPanel->view->pos.y == oy + oh - 1) {
 			down[i] = 1;
-			if (ox == tmpPanel->pos.x) {
+			if (ox == tmpPanel->view->pos.x) {
 				downLeftValid = true;
-				if (ow == tmpPanel->pos.w) {
+				if (ow == tmpPanel->view->pos.w) {
 					downRightValid = true;
 					justDownPanel = tmpPanel;
 				}
 			}
-			if (ox + ow == tmpPanel->pos.x + tmpPanel->pos.w) {
+			if (ox + ow == tmpPanel->view->pos.x + tmpPanel->view->pos.w) {
 				downRightValid = true;
 			}
 		}
 	}
 	if (justLeftPanel) {
-		justLeftPanel->pos.w += ox + ow - (justLeftPanel->pos.x + justLeftPanel->pos.w);
+		justLeftPanel->view->pos.w += ox + ow - (justLeftPanel->view->pos.x + justLeftPanel->view->pos.w);
 	} else if (justRightPanel) {
-		justRightPanel->pos.w = justRightPanel->pos.x + justRightPanel->pos.w - ox;
-		justRightPanel->pos.x = ox;
+		justRightPanel->view->pos.w = justRightPanel->view->pos.x + justRightPanel->view->pos.w - ox;
+		justRightPanel->view->pos.x = ox;
 	} else if (justUpPanel) {
-		justUpPanel->pos.h += oy + oh - (justUpPanel->pos.y + justUpPanel->pos.h);
+		justUpPanel->view->pos.h += oy + oh - (justUpPanel->view->pos.y + justUpPanel->view->pos.h);
 	} else if (justDownPanel) {
-		justDownPanel->pos.h = oh + justDownPanel->pos.y + justDownPanel->pos.h - (oy + oh);
-		justDownPanel->pos.y = oy;
+		justDownPanel->view->pos.h = oh + justDownPanel->view->pos.y + justDownPanel->view->pos.h - (oy + oh);
+		justDownPanel->view->pos.y = oy;
 	} else if (leftUpValid && leftDownValid) {
-		for (i = 0; i < panels->n_panels; i++) {
+		for (i = 0; i < ps->n_panels; i++) {
 			if (left[i] != -1) {
-				tmpPanel = getPanel (panels, i);
-				tmpPanel->pos.w += ox + ow - (tmpPanel->pos.x + tmpPanel->pos.w);
+				tmpPanel = getPanel (ps, i);
+				tmpPanel->view->pos.w += ox + ow - (tmpPanel->view->pos.x + tmpPanel->view->pos.w);
 			}
 		}
 	} else if (rightUpValid && rightDownValid) {
-		for (i = 0; i < panels->n_panels; i++) {
+		for (i = 0; i < ps->n_panels; i++) {
 			if (right[i] != -1) {
-				tmpPanel = getPanel (panels, i);
-				tmpPanel->pos.w = tmpPanel->pos.x + tmpPanel->pos.w - ox;
-				tmpPanel->pos.x = ox;
+				tmpPanel = getPanel (ps, i);
+				tmpPanel->view->pos.w = tmpPanel->view->pos.x + tmpPanel->view->pos.w - ox;
+				tmpPanel->view->pos.x = ox;
 			}
 		}
 	} else if (upLeftValid && upRightValid) {
-		for (i = 0; i < panels->n_panels; i++) {
+		for (i = 0; i < ps->n_panels; i++) {
 			if (up[i] != -1) {
-				tmpPanel = getPanel (panels, i);
-				tmpPanel->pos.h += oy + oh - (tmpPanel->pos.y + tmpPanel->pos.h);
+				tmpPanel = getPanel (ps, i);
+				tmpPanel->view->pos.h += oy + oh - (tmpPanel->view->pos.y + tmpPanel->view->pos.h);
 			}
 		}
 	} else if (downLeftValid && downRightValid) {
-		for (i = 0; i < panels->n_panels; i++) {
+		for (i = 0; i < ps->n_panels; i++) {
 			if (down[i] != -1) {
-				tmpPanel = getPanel (panels, i);
-				tmpPanel->pos.h = oh + tmpPanel->pos.y + tmpPanel->pos.h - (oy + oh);
-				tmpPanel->pos.y = oy;
+				tmpPanel = getPanel (ps, i);
+				tmpPanel->view->pos.h = oh + tmpPanel->view->pos.y + tmpPanel->view->pos.h - (oy + oh);
+				tmpPanel->view->pos.y = oy;
 			}
 		}
 	}
 }
 
-static void replaceCmd(RPanels* panels, const char *title, const char *cmd, const bool caching) {
+static void replaceCmd(RCore *core, const char *title, const char *cmd, const bool cache) {
+	RPanels *panels = core->panels;
 	RPanel *cur = getCurPanel (panels);
-	freeSinglePanel (cur);
-	cur->title = strdup (title);
-	cur->cmd = r_str_newf (cmd);
-	cur->caching = caching;
-	cur->cmdStrCache = NULL;
+	freePanelModel (cur);
+	cur->model = R_NEW0 (RPanelModel);
+	cur->model->title = r_str_dup (cur->model->title, title);
+	cur->model->cmd = r_str_dup (cur->model->cmd, cmd);
+	cur->model->cache = cache;
+	setCmdStrCache (cur, NULL);
+	cur->model->addr = core->offset;
+	cur->model->type = PANEL_TYPE_DEFAULT;
+	setdcb (cur);
+	setrcb (panels, cur);
 	setRefreshAll (panels, false);
 }
 
 static void swapPanels(RPanels *panels, int p0, int p1) {
 	RPanel *panel0 = getPanel (panels, p0);
 	RPanel *panel1 = getPanel (panels, p1);
-	char *t = panel0->title;
-	char *c = panel0->cmd;
-	char *cc = panel0->cmdStrCache;
-	int cur = panel0->curpos;
-	ut64 ba = panel0->baseAddr;
-	ut64 a = panel0->addr;
+	RPanelModel *tmp = panel0->model;
 
-	panel0->title = panel1->title;
-	panel0->cmd = panel1->cmd;
-	panel0->cmdStrCache = panel1->cmdStrCache;
-	panel0->curpos = panel1->curpos;
-	panel0->baseAddr = panel1->baseAddr;
-	panel0->addr = panel1->addr;
-
-	panel1->title = t;
-	panel1->cmd = c;
-	panel1->cmdStrCache = cc;
-	panel1->curpos = cur;
-	panel1->baseAddr = ba;
-	panel1->addr = a;
+	panel0->model = panel1->model;
+	panel1->model = tmp;
 }
 
 static void callVisualGraph(RCore *core) {
@@ -1393,23 +1842,52 @@ static bool checkFunc(RCore *core) {
 	return true;
 }
 
+static bool checkFuncDiff(RCore *core, RPanel *p) {
+	RAnalFunction *fun = r_anal_get_fcn_in (core->anal, core->offset, R_ANAL_FCN_TYPE_NULL);
+	if (!fun) {
+		if (R_STR_ISEMPTY (p->model->funcName)) {
+			return false;
+		}
+		p->model->funcName = r_str_dup (p->model->funcName, "");
+		return true;
+	}
+	if (!p->model->funcName || strcmp (p->model->funcName, fun->name)) {
+		p->model->funcName = r_str_dup (p->model->funcName, fun->name);
+		return true;
+	}
+	return false;
+}
+
 static void setRefreshAll(RPanels *panels, bool clearCache) {
 	int i;
 	for (i = 0; i < panels->n_panels; i++) {
 		RPanel *panel = getPanel (panels, i);
-		panel->refresh = true;
+		panel->view->refresh = true;
 		if (clearCache) {
-			free (panel->cmdStrCache);
-			panel->cmdStrCache = NULL;
+			setCmdStrCache (panel, NULL);
 		}
 	}
 }
 
-static void createNewPanel(RCore *core, char *name, char *cmd, bool caching) {
+static void setRefreshByType(RPanels *panels, const char *cmd, bool clearCache) {
+	int i;
+	for (i = 0; i < panels->n_panels; i++) {
+		RPanel *p = getPanel (panels, i);
+		if (strcmp (p->model->cmd, cmd)) {
+			continue;
+		}
+		p->view->refresh = true;
+		if (clearCache) {
+			free (p->model->cmdStrCache);
+			p->model->cmdStrCache = NULL;
+		}
+	}
+}
+
+static void addNewPanel(RCore *core, char *name, char *cmd, bool cache) {
 	RPanels *panels = core->panels;
-	addPanelFrame (core, name, cmd, caching);
-	changePanelNum (panels, panels->n_panels - 1, 0);
-	r_core_panels_layout (panels);
+	insertPanel (core, 0, name, cmd, cache);
+	panels_layout (panels);
 	panels->curnode = 0;
 	setRefreshAll (panels, false);
 }
@@ -1429,63 +1907,99 @@ static RConsCanvas *createNewCanvas(RCore *core, int w, int h) {
 static bool checkPanelNum(RPanels *panels) {
 	if (panels->n_panels + 1 > PANEL_NUM_LIMIT) {
 		const char *msg = "panel limit exceeded.";
-		r_cons_yesno ('y', msg);
+		(void)r_cons_any_key (msg);
 		return false;
 	}
 	return true;
 }
 
-static void addPanelFrame(RCore *core, const char *title, const char *cmd, const bool caching) {
-	RPanels *panels = core->panels;
-	RPanel *p = getPanel (panels, panels->n_panels);
+static void buildPanelParam(RCore *core, RPanel *p, const char *title, const char *cmd, bool cache) {
+	RPanelModel *m = p->model;
+	RPanelView *v = p->view;
+	m->cache = cache;
+	m->type = PANEL_TYPE_DEFAULT;
+	m->rotate = 0;
+	v->curpos = 0;
+	m->addr = core->offset;
+	m->rotateCb = NULL;
+	setCmdStrCache (p, NULL);
+	setReadOnly(p, NULL);
+	m->funcName = NULL;
+	v->refresh = true;
 	if (title) {
-		p->title = strdup (title);
-		p->cmd = r_str_newf (cmd);
+		m->title = r_str_dup (m->title, title);
+		if (cmd) {
+			m->cmd = r_str_dup (m->cmd, cmd);
+		} else {
+			m->cmd = r_str_dup (m->cmd, "");
+		}
+	} else if (cmd) {
+		m->title = r_str_dup (m->title, cmd);
+		m->cmd = r_str_dup (m->cmd, cmd);
 	} else {
-		p->title = r_core_cmd_str (core, cmd);
-		p->cmd = NULL;
+		m->title = r_str_dup (m->title, "");
+		m->cmd = r_str_dup (m->cmd, "");
 	}
-	p->type = PANEL_TYPE_DEFAULT;
-	p->refresh = true;
-	p->curpos = 0;
-	p->caching = caching;
-	p->cmdStrCache = NULL;
-	p->addr = core->offset;
-	if (p->cmd) {
-		if (!strcmp (p->cmd, PANEL_CMD_STACK)) {
+	if (R_STR_ISNOTEMPTY (m->cmd)) {
+		setdcb (p);
+		setrcb (core->panels, p);
+		if (!strncmp (m->cmd, PANEL_CMD_STACK, strlen (PANEL_CMD_STACK))) {
 			const char *sp = r_reg_get_name (core->anal->reg, R_REG_NAME_SP);
 			const ut64 stackbase = r_reg_getv (core->anal->reg, sp);
-			p->baseAddr = stackbase;
-			p->addr = stackbase - r_config_get_i (core->config, "stack.delta");
-			p->directionCb = directionStackCb;
-		} else if (!strcmp (p->cmd, PANEL_CMD_GRAPH)) {
-			p->directionCb = directionGraphCb;
-		} else if (!strcmp (p->cmd, PANEL_CMD_DISASSEMBLY)) {
-			p->directionCb = directionDisassemblyCb;
-		} else if (!strcmp (p->cmd, PANEL_CMD_REGISTERS)) {
-			p->directionCb = directionRegisterCb;
-		} else if (!strcmp (p->cmd, PANEL_CMD_HEXDUMP)) {
-			p->directionCb = directionHexdumpCb;
-		} else {
-			p->directionCb = directionDefaultCb;
+			m->baseAddr = stackbase;
+			m->addr = stackbase - r_config_get_i (core->config, "stack.delta");
 		}
 	}
-	panels->n_panels++;
+	core->panels->n_panels++;
+	return;
+}
+
+static void setdcb(RPanel *p) {
+	if (!p->model->cmd) {
+		return;
+	}
+	if (p->model->cmdStrCache || p->model->readOnly) {
+		p->model->directionCb = directionDefaultCb;
+		return;
+	}
+	if (!strncmp (p->model->cmd, PANEL_CMD_STACK, strlen (PANEL_CMD_STACK))) {
+		p->model->directionCb = directionStackCb;
+	} else if (!strncmp (p->model->cmd, PANEL_CMD_GRAPH, strlen (PANEL_CMD_GRAPH))) {
+		p->model->directionCb = directionGraphCb;
+	} else if (!strncmp (p->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+			strcmp (p->model->cmd, "pdc")) {
+		p->model->directionCb = directionDisassemblyCb;
+	} else if (!strncmp (p->model->cmd, PANEL_CMD_REGISTERS, strlen (PANEL_CMD_REGISTERS))) {
+		p->model->directionCb = directionRegisterCb;
+	} else if (!strncmp (p->model->cmd, PANEL_CMD_HEXDUMP, strlen (PANEL_CMD_HEXDUMP))) {
+		p->model->directionCb = directionHexdumpCb;
+	} else {
+		p->model->directionCb = directionDefaultCb;
+	}
+}
+
+static void setrcb(RPanels *ps, RPanel *p) {
+	SdbKv *kv;
+	SdbListIter *sdb_iter;
+	SdbList *sdb_list = sdb_foreach_list (ps->rotate_db, false);
+	ls_foreach (sdb_list, sdb_iter, kv) {
+		char *key =  sdbkv_key (kv);
+		if (strncmp (key, p->model->cmd, strlen (key))) {
+			continue;
+		}
+		p->model->rotateCb = (RPanelRotateCallback)sdb_ptr_get (ps->rotate_db, key, 0);
+		break;
+	}
+	ls_free (sdb_list);
 }
 
 static int openFileCb(void *user) {
 	RCore *core = (RCore *)user;
-	core->cons->line->file_prompt = true;
+	core->cons->line->prompt_type = R_LINE_PROMPT_FILE;
 	r_line_set_hist_callback (core->cons->line, &file_history_up, &file_history_down);
-	char *res = r_cons_input ("open file: ");
-	if (res) {
-		if (*res) {
-			r_core_cmdf (core, "o %s", res);
-		}
-		free (res);
-	}
-	core->cons->line->file_prompt = false;
-	r_line_set_hist_callback (core->cons->line, &cmd_history_up, &cmd_history_down);
+	addCmdfPanel (core, "open file: ", "o %s");
+	core->cons->line->prompt_type = R_LINE_PROMPT_DEFAULT;
+	r_line_set_hist_callback (core->cons->line, &r_line_hist_cmd_up, &r_line_hist_cmd_down);
 	return 0;
 }
 
@@ -1503,12 +2017,13 @@ static int debuggerCb(void *user) {
 
 static int loadLayoutSavedCb(void *user) {
 	RCore *core = (RCore *)user;
-	if (!loadSavedPanelsLayout (core, false)) {
+	if (!loadSavedPanelsLayout (core, NULL, false)) {
 		createDefaultPanels (core);
-		r_core_panels_layout (core->panels);
+		panels_layout (core->panels);
 	}
 	core->panels->curnode = 0;
 	core->panels->panelsMenu->depth = 1;
+	setMode (core->panels, PANEL_MODE_DEFAULT);
 	return 0;
 }
 
@@ -1516,9 +2031,10 @@ static int loadLayoutDefaultCb(void *user) {
 	RCore *core = (RCore *)user;
 	initPanels (core, core->panels);
 	createDefaultPanels (core);
-	r_core_panels_layout (core->panels);
+	panels_layout (core->panels);
 	setRefreshAll (core->panels, false);
 	core->panels->panelsMenu->depth = 1;
+	setMode (core->panels, PANEL_MODE_DEFAULT);
 	return 0;
 }
 
@@ -1530,19 +2046,15 @@ static int closeFileCb(void *user) {
 
 static int saveLayoutCb(void *user) {
 	RCore *core = (RCore *)user;
-	savePanelsLayout (core, false);
+	savePanelsLayout (core->panels, NULL, false);
 	const char *msg = "Panels layout saved!";
-	r_cons_yesno ('y', msg);
+	(void)r_cons_any_key (msg);
 	return 0;
 }
 
 static int copyCb(void *user) {
 	RCore *core = (RCore *)user;
-	char *res = r_cons_input ("How many bytes? ");
-	if (res) {
-		r_core_cmdf (core, "\"y %s\"", res);
-		free (res);
-	}
+	addCmdfPanel (core, "How many bytes? ", "\"y %s\"");
 	return 0;
 }
 
@@ -1554,21 +2066,13 @@ static int pasteCb(void *user) {
 
 static int writeStrCb(void *user) {
 	RCore *core = (RCore *)user;
-	char *res = r_cons_input ("insert string: ");
-	if (res) {
-		r_core_cmdf (core, "\"w %s\"", res);
-		free (res);
-	}
+	addCmdfPanel (core, "insert string: ", "\"w %s\"");
 	return 0;
 }
 
 static int writeHexCb(void *user) {
 	RCore *core = (RCore *)user;
-	char *res = r_cons_input ("insert hexpairs: ");
-	if (res) {
-		r_core_cmdf (core, "\"wx %s\"", res);
-		free (res);
-	}
+	addCmdfPanel (core, "insert hexpairs: ", "\"wx %s\"");
 	return 0;
 }
 
@@ -1580,15 +2084,7 @@ static int assembleCb(void *user) {
 
 static int fillCb(void *user) {
 	RCore *core = (RCore *)user;
-	char *s = r_cons_input ("Fill with: ");
-	r_core_cmdf (core, "wow %s", s);
-	free (s);
-	return 0;
-}
-
-static int iocacheCb(void *user) {
-	RCore *core = (RCore *)user;
-	r_core_cmd0 (core, "e!io.cache");
+	addCmdfPanel (core, "Fill with: ", "wow %s");
 	return 0;
 }
 
@@ -1630,41 +2126,25 @@ static int systemShellCb(void *user) {
 
 static int stringCb(void *user) {
 	RCore *core = (RCore *)user;
-	char *res = r_cons_input ("search string: ");
-	if (res) {
-		r_core_cmdf (core, "\"/ %s\"", res);
-		free (res);
-	}
+	addCmdfPanel (core, "search string: ", "\"/ %s\"");
 	return 0;
 }
 
 static int ropCb(void *user) {
 	RCore *core = (RCore *)user;
-	char *res = r_cons_input ("rop grep: ");
-	if (res) {
-		r_core_cmdf (core, "\"/R %s\"", res);
-		free (res);
-	}
+	addCmdfPanel (core, "rop grep: ", "\"/R %s\"");
 	return 0;
 }
 
 static int codeCb(void *user) {
 	RCore *core = (RCore *)user;
-	char *res = r_cons_input ("search code: ");
-	if (res) {
-		r_core_cmdf (core, "\"/c %s\"", res);
-		free (res);
-	}
+	addCmdfPanel (core, "search code: ", "\"/c %s\"");
 	return 0;
 }
 
 static int hexpairsCb(void *user) {
 	RCore *core = (RCore *)user;
-	char *res = r_cons_input ("search hexpairs: ");
-	if (res) {
-		r_core_cmdf (core, "\"/x %s\"", res);
-		free (res);
-	}
+	addCmdfPanel (core, "search hexpairs: ", "\"/x %s\"");
 	return 0;
 }
 
@@ -1689,16 +2169,75 @@ static int stepoverCb(void *user) {
 	return 0;
 }
 
+static int ioCacheOnCb(void *user) {
+	RCore *core = (RCore *)user;
+	r_config_set_i (core->config, "io.cache", 1);
+	(void)r_cons_any_key ("io.cache is on");
+	setMode (core->panels, PANEL_MODE_DEFAULT);
+	return 0;
+}
+
+static int ioCacheOffCb(void *user) {
+	RCore *core = (RCore *)user;
+	r_config_set_i (core->config, "io.cache", 0);
+	(void)r_cons_any_key ("io.cache is off");
+	setMode (core->panels, PANEL_MODE_DEFAULT);
+	return 0;
+}
+
 static void updateDisassemblyAddr (RCore *core) {
 	RPanels *panels = core->panels;
 	int i;
 	for (i = 0; i < panels->n_panels; i++) {
 		RPanel *p = getPanel (panels, i);
-		if (!strcmp (p->cmd, PANEL_CMD_DISASSEMBLY)) {
-			p->addr = core->offset;
+		if (!strncmp (p->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+					strcmp (p->model->cmd, "pdc")) {
+			p->model->addr = core->offset;
 		}
 	}
 	setRefreshAll (panels, false);
+}
+
+static void setMode(RPanels *ps, RPanelsMode mode) {
+	ps->mode = mode;
+	updateHelp (ps);
+}
+
+static void updateHelp(RPanels *ps) {
+	int i;
+	for (i = 0; i < ps->n_panels; i++) {
+		RPanel *p = getPanel (ps, i);
+		if (r_str_endswith (p->model->cmd, "Help")) {
+			RStrBuf *rsb = r_strbuf_new (NULL);
+			const char *title, *cmd;
+			const char **msg;
+			switch (ps->mode) {
+				case PANEL_MODE_WINDOW:
+					title = "Panels Window mode help";
+					cmd = "Window Mode Help";
+					msg = help_msg_panels_window;
+					break;
+				case PANEL_MODE_ZOOM:
+					title = "Panels Zoom mode help";
+					cmd = "Zoom Mode Help";
+					msg = help_msg_panels_zoom;
+					break;
+				default:
+					title = "Visual Ascii Art Panels";
+					cmd = "Help";
+					msg = help_msg_panels;
+					break;
+			}
+			p->model->title = r_str_dup (p->model->title, cmd);
+			p->model->cmd = r_str_dup (p->model->cmd, cmd);
+			r_core_visual_append_help (rsb, title, msg);
+			if (!rsb) {
+				return;
+			}
+			setReadOnly (p, r_strbuf_drain (rsb));
+			p->view->refresh = true;
+		}
+	}
 }
 
 static int reloadCb(void *user) {
@@ -1784,22 +2323,15 @@ static int fortuneCb(void *user) {
 	return 0;
 }
 
-static int commandsCb(void *user) {
-	RCore *core = (RCore *)user;
-	r_core_cmd0 (core, "?;?@?;?$?;???");
-	r_cons_any_key (NULL);
-	return 0;
-}
-
 static int gameCb(void *user) {
 	RCore *core = (RCore *)user;
 	r_cons_2048 (core->panels->can->color);
 	return 0;
 }
 
-static int screenLock(void *user) {
+static int helpCb(void *user) {
 	RCore *core = (RCore *)user;
-	r_core_cmd0 (core, "LL");
+	toggleHelp (core);
 	return 0;
 }
 
@@ -1808,7 +2340,7 @@ static int licenseCb(void *user) {
 	return 0;
 }
 
-static int aboutCb(void *user) {
+static int versionCb(void *user) {
 	RCore *core = (RCore *)user;
 	char *s = r_core_cmd_str (core, "?V");
 	r_cons_message (s);
@@ -1833,23 +2365,23 @@ static int quitCb(void *user) {
 static void directionDefaultCb(void *user, int direction) {
 	RCore *core = (RCore *)user;
 	RPanel *cur = getCurPanel (core->panels);
-	cur->refresh = true;
+	cur->view->refresh = true;
 	switch ((Direction)direction) {
 	case LEFT:
-		if (cur->sx > 0) {
-			cur->sx--;
+		if (cur->view->sx > 0) {
+			cur->view->sx--;
 		}
 		return;
 	case RIGHT:
-		cur->sx++;
+		cur->view->sx++;
 		return;
 	case UP:
-		if (cur->sy > 0) {
-			cur->sy--;
+		if (cur->view->sy > 0) {
+			cur->view->sy--;
 		}
 		return;
 	case DOWN:
-		cur->sy++;
+		cur->view->sy++;
 		return;
 	}
 }
@@ -1859,47 +2391,47 @@ static void directionDisassemblyCb(void *user, int direction) {
 	RPanels *panels = core->panels;
 	RPanel *cur = getCurPanel (panels);
 	int cols = core->print->cols;
-	cur->refresh = true;
+	cur->view->refresh = true;
 	switch ((Direction)direction) {
 	case LEFT:
 		if (core->print->cur_enabled) {
 			cursorLeft (core);
-		} else if (cur->sx > 0) {
-			cur->sx--;
-			cur->refresh = true;
+		} else if (cur->view->sx > 0) {
+			cur->view->sx--;
+			cur->view->refresh = true;
 		}
 		return;
 	case RIGHT:
 		if (core->print->cur_enabled) {
 			cursorRight (core);
 		} else {
-			cur->sx++;
-			cur->refresh = true;
+			cur->view->sx++;
+			cur->view->refresh = true;
 		}
 		return;
 	case UP:
-		core->offset = cur->addr;
+		core->offset = cur->model->addr;
 		if (core->print->cur_enabled) {
 			cursorUp (core);
-			cur->addr = core->offset;
+			cur->model->addr = core->offset;
 		} else {
 			r_core_visual_disasm_up (core, &cols);
 			r_core_seek_delta (core, -cols);
-			cur->addr = core->offset;
+			cur->model->addr = core->offset;
 		}
 		return;
 	case DOWN:
-		core->offset = cur->addr;
+		core->offset = cur->model->addr;
 		if (core->print->cur_enabled) {
 			cursorDown (core);
 			r_core_block_read (core);
-			cur->addr = core->offset;
+			cur->model->addr = core->offset;
 		} else {
 			RAsmOp op;
 			r_core_visual_disasm_down (core, &op, &cols);
 			r_core_seek (core, core->offset + cols, 1);
 			r_core_block_read (core);
-			cur->addr = core->offset;
+			cur->model->addr = core->offset;
 		}
 		return;
 	}
@@ -1909,23 +2441,23 @@ static void directionGraphCb(void *user, int direction) {
 	RCore *core = (RCore *)user;
 	RPanels *panels = core->panels;
 	RPanel *cur = getCurPanel (panels);
-	cur->refresh = true;
+	cur->view->refresh = true;
 	switch ((Direction)direction) {
 	case LEFT:
-		if (cur->sx > 0) {
-			cur->sx -= r_config_get_i (core->config, "graph.scroll");
+		if (cur->view->sx > 0) {
+			cur->view->sx -= r_config_get_i (core->config, "graph.scroll");
 		}
 		return;
 	case RIGHT:
-		cur->sx += r_config_get_i (core->config, "graph.scroll");
+		cur->view->sx += r_config_get_i (core->config, "graph.scroll");
 		return;
 	case UP:
-		if (cur->sy > 0) {
-			cur->sy -= r_config_get_i (core->config, "graph.scroll");
+		if (cur->view->sy > 0) {
+			cur->view->sy -= r_config_get_i (core->config, "graph.scroll");
 		}
 		return;
 	case DOWN:
-		cur->sy += r_config_get_i (core->config, "graph.scroll");
+		cur->view->sy += r_config_get_i (core->config, "graph.scroll");
 		return;
 	}
 }
@@ -1936,22 +2468,22 @@ static void directionRegisterCb(void *user, int direction) {
 	RPanel *cur = getCurPanel (panels);
 	int cols = core->dbg->regcols;
 	cols = cols > 0 ? cols : 3;
-	cur->refresh = true;
+	cur->view->refresh = true;
 	switch ((Direction)direction) {
 	case LEFT:
 		if (core->print->cur_enabled) {
 			cursorLeft (core);
-		} else if (cur->sx > 0) {
-			cur->sx--;
-			cur->refresh = true;
+		} else if (cur->view->sx > 0) {
+			cur->view->sx--;
+			cur->view->refresh = true;
 		}
 		return;
 	case RIGHT:
 		if (core->print->cur_enabled) {
 			cursorRight (core);
 		} else {
-			cur->sx++;
-			cur->refresh = true;
+			cur->view->sx++;
+			cur->view->refresh = true;
 		}
 		return;
 	case UP:
@@ -1979,33 +2511,33 @@ static void directionStackCb(void *user, int direction) {
 	if (cols < 1) {
 		cols = 16;
 	}
-	cur->refresh = true;
+	cur->view->refresh = true;
 	switch ((Direction)direction) {
 	case LEFT:
 		if (core->print->cur_enabled) {
 			cursorLeft (core);
-		} else if (cur->sx > 0) {
-			cur->sx--;
-			cur->refresh = true;
+		} else if (cur->view->sx > 0) {
+			cur->view->sx--;
+			cur->view->refresh = true;
 		}
 		return;
 	case RIGHT:
 		if (core->print->cur_enabled) {
 			cursorRight (core);
 		} else {
-			cur->sx++;
-			cur->refresh = true;
+			cur->view->sx++;
+			cur->view->refresh = true;
 		}
 		return;
 	case UP:
 		r_config_set_i (core->config, "stack.delta",
 				r_config_get_i (core->config, "stack.delta") + cols);
-		cur->addr -= cols;
+		cur->model->addr -= cols;
 		return;
 	case DOWN:
 		r_config_set_i (core->config, "stack.delta",
 				r_config_get_i (core->config, "stack.delta") - cols);
-		cur->addr += cols;
+		cur->model->addr += cols;
 		return;
 	}
 }
@@ -2018,63 +2550,63 @@ static void directionHexdumpCb(void *user, int direction) {
 	if (cols < 1) {
 		cols = 16;
 	}
-	cur->refresh = true;
+	cur->view->refresh = true;
 	switch ((Direction)direction) {
 	case LEFT:
 		if (!core->print->cur) {
-			cur->addr -= cols;
+			cur->model->addr -= cols;
 			core->print->cur += cols - 1;
 		} else if (core->print->cur_enabled) {
 			cursorLeft (core);
-		} else if (cur->sx > 0) {
-			cur->sx--;
-			cur->refresh = true;
+		} else if (cur->view->sx > 0) {
+			cur->view->sx--;
+			cur->view->refresh = true;
 		}
 		return;
 	case RIGHT:
-		if (core->print->cur / cols + 1 > cur->pos.h - 5
+		if (core->print->cur / cols + 1 > cur->view->pos.h - 5
 				&& core->print->cur % cols == cols - 1) {
-			cur->addr += cols;
+			cur->model->addr += cols;
 			core->print->cur -= cols - 1;
 		} else if (core->print->cur_enabled) {
 			cursorRight (core);
 		} else {
-			cur->sx++;
-			cur->refresh = true;
+			cur->view->sx++;
+			cur->view->refresh = true;
 		}
 		return;
 	case UP:
-		if (!cur->caching) {
+		if (!cur->model->cache) {
 			if (core->print->cur_enabled) {
 				if (!(core->print->cur / cols)) {
-					cur->addr -= cols;
+					cur->model->addr -= cols;
 				} else {
 					cursorUp (core);
 				}
 			} else {
-				if (cur->addr <= cols) {
-					cur->addr = 0;
+				if (cur->model->addr <= cols) {
+					cur->model->addr = 0;
 				} else {
-					cur->addr -= cols;
+					cur->model->addr -= cols;
 				}
 			}
-		} else if (cur->sy > 0) {
-			cur->sy--;
+		} else if (cur->view->sy > 0) {
+			cur->view->sy--;
 		}
 		return;
 	case DOWN:
-		if (!cur->caching) {
+		if (!cur->model->cache) {
 			if (core->print->cur_enabled) {
-				if (core->print->cur / cols + 1 > cur->pos.h - 5) {
-					cur->addr += cols;
+				if (core->print->cur / cols + 1 > cur->view->pos.h - 5) {
+					cur->model->addr += cols;
 				} else {
 					cursorDown (core);
 				}
 			} else {
-				cur->addr += cols;
+				cur->model->addr += cols;
 			}
 		} else {
-			cur->sy++;
+			cur->view->sy++;
 		}
 		return;
 	}
@@ -2085,14 +2617,16 @@ static void hudstuff(RCore *core) {
 	RPanel *cur = getCurPanel (panels);
 	r_core_visual_hudstuff (core);
 
-	if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)) {
-		cur->addr = core->offset;
+	if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+				strcmp (cur->model->cmd, "pdc")) {
+		cur->model->addr = core->offset;
 	} else {
 		int i;
 		for (i = 0; i < panels->n_panels; i++) {
-			RPanel *panel = &panels->panel[i];
-			if (!strcmp (panel->cmd, PANEL_CMD_DISASSEMBLY)) {
-				panel->addr = core->offset;
+			RPanel *panel = getPanel (panels, i);
+			if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+						strcmp (cur->model->cmd, "pdc")) {
+				panel->model->addr = core->offset;
 				break;
 			}
 		}
@@ -2109,8 +2643,8 @@ static void printSnow(RPanels *panels) {
 	if (amount > 0) {
 		for (i = 0; i < amount; i++) {
 			RPanelsSnow *snow = R_NEW (RPanelsSnow);
-			snow->x = r_num_rand (cur->pos.w) + cur->pos.x;
-			snow->y = cur->pos.y;
+			snow->x = r_num_rand (cur->view->pos.w) + cur->view->pos.x;
+			snow->y = cur->view->pos.y;
 			r_list_append (panels->snows, snow);
 		}
 	}
@@ -2120,16 +2654,20 @@ static void printSnow(RPanels *panels) {
 		int pos = r_num_rand (3) - 1;
 		snow->x += pos;
 		snow->y++;
-		if (snow->x >= cur->pos.w + cur->pos.x || snow->x <= cur->pos.x + 1) {
+		if (snow->x >= cur->view->pos.w + cur->view->pos.x || snow->x <= cur->view->pos.x + 1) {
 			r_list_delete (panels->snows, iter);
 			continue;
 		}
-		if (snow->y >= cur->pos.h + cur->pos.y - 1) {
+		if (snow->y >= cur->view->pos.h + cur->view->pos.y - 1) {
 			r_list_delete (panels->snows, iter);
 			continue;
 		}
 		if (r_cons_canvas_gotoxy (panels->can, snow->x, snow->y)) {
-			r_cons_canvas_write (panels->can, "*");
+			if (panels->fun == PANEL_FUN_SAKURA) {
+				r_cons_canvas_write (panels->can, Color_BMAGENTA","Color_RESET);
+			} else {
+				r_cons_canvas_write (panels->can, "*");
+			}
 		}
 	}
 }
@@ -2138,7 +2676,7 @@ static void resetSnow(RPanels *panels) {
 	RPanel *cur = getCurPanel (panels);
 	r_list_free (panels->snows);
 	panels->snows = NULL;
-	cur->refresh = true;
+	cur->view->refresh = true;
 }
 
 static int openMenuCb (void *user) {
@@ -2147,23 +2685,23 @@ static int openMenuCb (void *user) {
 	RPanelsMenuItem *parent = menu->history[menu->depth - 1];
 	RPanelsMenuItem *child = parent->sub[parent->selectedIndex];
 	if (menu->depth < 2) {
-		child->p->pos.x = menu->root->selectedIndex * 6;
-		child->p->pos.y = 1;
+		child->p->view->pos.x = menu->root->selectedIndex * 6;
+		child->p->view->pos.y = 1;
 	} else {
 		RPanelsMenuItem *p = menu->history[menu->depth - 2];
 		RPanelsMenuItem *parent2 = p->sub[p->selectedIndex];
-		child->p->pos.x = parent2->p->pos.x + parent2->p->pos.w - 1;
-		child->p->pos.y = menu->depth == 2 ? parent2->p->pos.y + parent2->selectedIndex : parent2->p->pos.y;
+		child->p->view->pos.x = parent2->p->view->pos.x + parent2->p->view->pos.w - 1;
+		child->p->view->pos.y = menu->depth == 2 ? parent2->p->view->pos.y + parent2->selectedIndex : parent2->p->view->pos.y;
 	}
-	RStrBuf *buf = drawMenu (child);
+	RStrBuf *buf = drawMenu (core, child);
 	if (!buf) {
 		return 0;
 	}
-	child->p->title = r_strbuf_drain (buf);
-	child->p->pos.w = r_str_bounds (child->p->title, &child->p->pos.h);
-	child->p->pos.h += 4;
-	child->p->type = PANEL_TYPE_MENU;
-	child->p->refresh = true;
+	child->p->model->title = r_strbuf_drain (buf);
+	child->p->view->pos.w = r_str_bounds (child->p->model->title, &child->p->view->pos.h);
+	child->p->view->pos.h += 4;
+	child->p->model->type = PANEL_TYPE_MENU;
+	child->p->view->refresh = true;
 	menu->refreshPanels[menu->n_refresh++] = child->p;
 	menu->history[menu->depth++] = child;
 	return 0;
@@ -2185,7 +2723,7 @@ static void addMenu(RCore *core, const char *parent, const char *name, RPanelsMe
 	}
 	item->n_sub = 0;
 	item->selectedIndex = 0;
-	item->name = name ? strdup (name) : NULL;
+	item->name = name ? r_str_new (name) : NULL;
 	item->sub = NULL;
 	item->cb = cb;
 	item->p = R_NEW0 (RPanel);
@@ -2193,8 +2731,13 @@ static void addMenu(RCore *core, const char *parent, const char *name, RPanelsMe
 		free (item);
 		return;
 	}
+	item->p->model = R_NEW0 (RPanelModel);
+	item->p->view = R_NEW0 (RPanelView);
+	if (!item->p->model || !item->p->view) {
+		return;
+	}
 	p_item->n_sub++;
-	struct r_panels_menu_item **sub = realloc (p_item->sub, sizeof (RPanelsMenuItem *) * p_item->n_sub);
+	RPanelsMenuItem **sub = realloc (p_item->sub, sizeof (RPanelsMenuItem *) * p_item->n_sub);
 	if (sub) {
 		p_item->sub = sub;
 		p_item->sub[p_item->n_sub - 1] = item;
@@ -2208,14 +2751,14 @@ static void removeMenu(RPanels *panels) {
 	int i;
 	menu->depth--;
 	for (i = 1; i < menu->depth; i++) {
-		menu->history[i]->p->refresh = true;
+		menu->history[i]->p->view->refresh = true;
 		menu->refreshPanels[i - 1] = menu->history[i]->p;
 	}
 	menu->n_refresh = menu->depth - 1;
 	setRefreshAll (panels, false);
 }
 
-static RStrBuf *drawMenu(RPanelsMenuItem *item) {
+static RStrBuf *drawMenu(RCore *core, RPanelsMenuItem *item) {
 	RStrBuf *buf = r_strbuf_new (NULL);
 	if (!buf) {
 		return NULL;
@@ -2223,27 +2766,27 @@ static RStrBuf *drawMenu(RPanelsMenuItem *item) {
 	int i;
 	for (i = 0; i < item->n_sub; i++) {
 		if (i == item->selectedIndex) {
-			r_strbuf_append (buf, "> ");
+			r_strbuf_appendf (buf, "> %s %s"Color_RESET,
+					core->cons->context->pal.graph_box2, item->sub[i]->name);
 		} else {
-			r_strbuf_append (buf, "  ");
+			r_strbuf_appendf (buf, "   %s", item->sub[i]->name);
 		}
-		r_strbuf_append (buf, item->sub[i]->name);
 		r_strbuf_append (buf, "          \n");
 	}
 	return buf;
 }
 
-static void moveMenuCursor(RPanelsMenu *menu, RPanelsMenuItem *parent) {
+static void moveMenuCursor(RCore *core, RPanelsMenu *menu, RPanelsMenuItem *parent) {
 	RPanel *p = parent->p;
-	RStrBuf *buf = drawMenu (parent);
+	RStrBuf *buf = drawMenu (core, parent);
 	if (!buf) {
 		return;
 	}
-	p->title = r_strbuf_drain (buf);
-	p->pos.w = r_str_bounds (p->title, &p->pos.h);
-	p->pos.h += 4;
-	p->type = PANEL_TYPE_MENU;
-	p->refresh = true;
+	p->model->title = r_strbuf_drain (buf);
+	p->view->pos.w = r_str_bounds (p->model->title, &p->view->pos.h);
+	p->view->pos.h += 4;
+	p->model->type = PANEL_TYPE_MENU;
+	p->view->refresh = true;
 	menu->refreshPanels[menu->n_refresh++] = p;
 }
 
@@ -2251,15 +2794,21 @@ static bool initPanelsMenu(RCore *core) {
 	RPanels *panels = core->panels;
 	RPanelsMenu *panelsMenu = R_NEW0 (RPanelsMenu);
 	RPanelsMenuItem *root = R_NEW0 (RPanelsMenuItem);
+	if (!root) {
+		return false;
+	}
 	panels->panelsMenu = panelsMenu;
 	panelsMenu->root = root;
 	root->n_sub = 0;
-	root->selectedIndex = 0;
 	root->name = NULL;
 	root->sub = NULL;
 	int i = 0;
 	while (menus[i]) {
-		addMenu (core, NULL, menus[i], openMenuCb);
+		if (!strcmp (menus[i], "Help")) {
+			addMenu (core, NULL, menus[i], helpCb);
+		} else {
+			addMenu (core, NULL, menus[i], openMenuCb);
+		}
 		i++;
 	}
 	char *parent = "File";
@@ -2278,7 +2827,7 @@ static bool initPanelsMenu(RCore *core) {
 		} else if (!strcmp (menus_File[i], "Quit")) {
 			addMenu (core, parent, menus_File[i], quitCb);
 		} else {
-			addMenu (core, parent, menus_File[i], layoutSidePanel);
+			addMenu (core, parent, menus_File[i], addCmdPanel);
 		}
 		i++;
 	}
@@ -2301,9 +2850,9 @@ static bool initPanelsMenu(RCore *core) {
 		} else if (!strcmp (menus_Edit[i], "Fill")) {
 			addMenu (core, parent, menus_Edit[i], fillCb);
 		} else if (!strcmp (menus_Edit[i], "io.cache")) {
-			addMenu (core, parent, menus_Edit[i], iocacheCb);
+			addMenu (core, parent, menus_Edit[i], openMenuCb);
 		} else {
-			addMenu (core, parent, menus_Edit[i], layoutSidePanel);
+			addMenu (core, parent, menus_Edit[i], addCmdPanel);
 		}
 		i++;
 	}
@@ -2314,7 +2863,7 @@ static bool initPanelsMenu(RCore *core) {
 		if (!strcmp (menus_View[i], "Colors")) {
 			addMenu (core, parent, menus_View[i], colorsCb);
 		} else {
-			addMenu (core, parent, menus_View[i], layoutSidePanel);
+			addMenu (core, parent, menus_View[i], addCmdPanel);
 		}
 		i++;
 	}
@@ -2363,7 +2912,7 @@ static bool initPanelsMenu(RCore *core) {
 		} else if (!strcmp (menus_Debug[i], "Reload")) {
 			addMenu (core, parent, menus_Debug[i], reloadCb);
 		} else {
-			addMenu (core, parent, menus_Debug[i], layoutSidePanel);
+			addMenu (core, parent, menus_Debug[i], addCmdPanel);
 		}
 		i++;
 	}
@@ -2387,21 +2936,24 @@ static bool initPanelsMenu(RCore *core) {
 		i++;
 	}
 
-	parent = "Help";
+	parent = "Fun";
 	i = 0;
-	while (menus_Help[i]) {
-		if (!strcmp (menus_Help[i], "Fortune")) {
-			addMenu (core, parent, menus_Help[i], fortuneCb);
-		} else if (!strcmp (menus_Help[i], "Commands")) {
-			addMenu (core, parent, menus_Help[i], commandsCb);
-		} else if (!strcmp (menus_Help[i], "2048")) {
-			addMenu (core, parent, menus_Help[i], gameCb);
-		} else if (!strcmp (menus_Help[i], "License")) {
-			addMenu (core, parent, menus_Help[i], licenseCb);
-		} else if (!strcmp (menus_Help[i], "Lock Screen")) {
-			addMenu (core, parent, menus_Help[i], screenLock);
-		} else if (!strcmp (menus_Help[i], "About")) {
-			addMenu (core, parent, menus_Help[i], aboutCb);
+	while (menus_Fun[i]) {
+		if (!strcmp (menus_Fun[i], "Fortune")) {
+			addMenu (core, parent, menus_Fun[i], fortuneCb);
+		} else if (!strcmp (menus_Fun[i], "2048")) {
+			addMenu (core, parent, menus_Fun[i], gameCb);
+		}
+		i++;
+	}
+
+	parent = "About";
+	i = 0;
+	while (menus_About[i]) {
+		if (!strcmp (menus_About[i], "License")) {
+			addMenu (core, parent, menus_About[i], licenseCb);
+		} else if (!strcmp (menus_About[i], "Version")) {
+			addMenu (core, parent, menus_About[i], versionCb);
 		}
 		i++;
 	}
@@ -2428,27 +2980,78 @@ static bool initPanelsMenu(RCore *core) {
 		i++;
 	}
 
-	root->selectedIndex = 0;
+	parent = "Edit.io.cache";
+
+	i = 0;
+	while (menus_iocache[i]) {
+		if (!strcmp (menus_iocache[i], "On")) {
+			addMenu (core, parent, menus_iocache[i], ioCacheOnCb);
+		} else if (!strcmp (menus_iocache[i], "Off")) {
+			addMenu (core, parent, menus_iocache[i], ioCacheOffCb);
+		}
+		i++;
+	}
+
 	panelsMenu->history = calloc (8, sizeof (RPanelsMenuItem *));
-	panelsMenu->history[0] = root;
-	panelsMenu->depth = 1;
-	panelsMenu->n_refresh = 0;
+	clearPanelsMenu (core);
 	panelsMenu->refreshPanels = calloc (8, sizeof (RPanel *));
 	return true;
 }
 
+static void clearPanelsMenuRec(RPanelsMenuItem *pmi) {
+	int i = 0;
+	for(i = 0; i < pmi->n_sub; i++) {
+		RPanelsMenuItem *sub = pmi->sub[i];
+		if (sub) {
+			sub->selectedIndex = 0;
+			clearPanelsMenuRec (sub);
+		}
+	}
+}
+
+static void clearPanelsMenu(RCore *core) {
+	RPanels *p = core->panels;
+	RPanelsMenu *pm = p->panelsMenu;
+	clearPanelsMenuRec (pm->root);
+	pm->root->selectedIndex = 0;
+	pm->history[0] = pm->root;
+	pm->depth = 1;
+	pm->n_refresh = 0;
+}
+
 static bool initPanels(RCore *core, RPanels *panels) {
-	panels->panel = calloc (sizeof (RPanel), PANEL_NUM_LIMIT);
+	panels->panel = calloc (sizeof (RPanel *), PANEL_NUM_LIMIT);
 	if (!panels->panel) {
 		return false;
+	}
+	int i;
+	for (i = 0; i < PANEL_NUM_LIMIT; i++) {
+		panels->panel[i] = R_NEW0 (RPanel);
+		panels->panel[i]->model = R_NEW0 (RPanelModel);
+		panels->panel[i]->view = R_NEW0 (RPanelView);
+		if (!panels->panel[i]->model || !panels->panel[i]->view) {
+			return false;
+		}
 	}
 	return true;
 }
 
+static void freePanelModel(RPanel *panel) {
+	free (panel->model->title);
+	free (panel->model->cmd);
+	free (panel->model->cmdStrCache);
+	free (panel->model->readOnly);
+	free (panel->model);
+}
+
+static void freePanelView(RPanel *panel) {
+	free (panel->view);
+}
+
 static void freeSinglePanel(RPanel *panel) {
-	free (panel->title);
-	free (panel->cmd);
-	free (panel->cmdStrCache);
+	freePanelModel (panel);
+	freePanelView (panel);
+	free (panel);
 }
 
 static void freeAllPanels(RPanels *panels) {
@@ -2463,18 +3066,15 @@ static void freeAllPanels(RPanels *panels) {
 static void refreshCoreOffset (RCore *core) {
 	RPanels *panels = core->panels;
 	RPanel *cur = getCurPanel (panels);
-	if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)) {
-		core->offset = cur->addr;
+	if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+				strcmp (cur->model->cmd, "pdc")) {
+		core->offset = cur->model->addr;
 	}
 }
 
-R_API void r_core_panels_refresh(RCore *core) {
+static void panels_refresh(RCore *core) {
 	RPanels *panels = core->panels;
 	if (!panels) {
-		return;
-	}
-	RPanel *panel = panels->panel;
-	if (!panel) {
 		return;
 	}
 	RConsCanvas *can = panels->can;
@@ -2494,15 +3094,16 @@ R_API void r_core_panels_refresh(RCore *core) {
 		setRefreshAll (panels, false);
 	}
 	fitToCanvas (panels);
+	//TODO use getPanel
 	for (i = 0; i < panels->n_panels; i++) {
 		if (i != panels->curnode) {
-			panelPrint (core, can, &panel[i], 0);
+			panelPrint (core, can, getPanel (panels, i), 0);
 		}
 	}
 	if (panels->mode == PANEL_MODE_MENU) {
-		panelPrint (core, can, &panel[panels->curnode], 0);
+		panelPrint (core, can, getCurPanel (panels), 0);
 	} else {
-		panelPrint (core, can, &panel[panels->curnode], 1);
+		panelPrint (core, can, getCurPanel (panels), 1);
 	}
 	for (i = 0; i < panels->panelsMenu->n_refresh; i++) {
 		panelPrint (core, can, panels->panelsMenu->refreshPanels[i], 1);
@@ -2514,7 +3115,7 @@ R_API void r_core_panels_refresh(RCore *core) {
 	if (panels->mode == PANEL_MODE_MENU) {
 		strcpy (title, "> ");
 	}
-	const char *color = panels->mode == PANEL_MODE_MENU ? core->cons->context->pal.graph_box : core->cons->context->pal.graph_box2;
+	const char *color = core->cons->context->pal.graph_box2;
 	if (panels->mode == PANEL_MODE_ZOOM) {
 		snprintf (str, sizeof (title) - 1, "%s Zoom Mode | Press Enter or q to quit"Color_RESET, color);
 		strcat (title, str);
@@ -2525,14 +3126,10 @@ R_API void r_core_panels_refresh(RCore *core) {
 		RPanelsMenuItem *parent = panels->panelsMenu->root;
 		for (i = 0; i < parent->n_sub; i++) {
 			RPanelsMenuItem *item = parent->sub[i];
-			if (panels->mode == PANEL_MODE_MENU) {
-				if (i == parent->selectedIndex) {
-					snprintf (str, sizeof (title) - 1, "%s[%s]"Color_RESET, color, item->name);
-				} else {
-					snprintf (str, sizeof (title) - 1, "%s %s "Color_RESET, color, item->name);
-				}
+			if (panels->mode == PANEL_MODE_MENU && i == parent->selectedIndex) {
+				snprintf (str, sizeof (title) - 1, "%s[%s] "Color_RESET, color, item->name);
 			} else {
-				snprintf (str, sizeof (title) - 1, "%s %s "Color_RESET, color, item->name);
+				snprintf (str, sizeof (title) - 1, "%s  ", item->name);
 			}
 			strcat (title, str);
 		}
@@ -2552,12 +3149,24 @@ R_API void r_core_panels_refresh(RCore *core) {
 	(void) r_cons_canvas_gotoxy (can, i, -can->sy);
 	r_cons_canvas_write (can, title);
 
-	sprintf (str, "Press L to refresh all the panels   ");
-	i -= strlen (str);
-	(void) r_cons_canvas_gotoxy (can, i, -can->sy);
-	r_cons_canvas_write (can, str);
+	int tab_pos = i;
+	for (i = core->panels_root->n_panels; i > 0; i--) {
+		if (i - 1 == core->panels_root->cur_panels) {
+			snprintf (title, sizeof (title) - 1, "%s[%d] "Color_RESET, color, i);
+			tab_pos -= r_str_ansi_len (title);
+		} else {
+			snprintf (title, sizeof (title) - 1, "%d ", i);
+			tab_pos -= strlen (title);
+		}
+		(void) r_cons_canvas_gotoxy (can, tab_pos, -can->sy);
+		r_cons_canvas_write (can, title);
+	}
+	snprintf (title, sizeof (title) - 1, "Tab ");
+	tab_pos -= strlen (title);
+	(void) r_cons_canvas_gotoxy (can, tab_pos, -can->sy);
+	r_cons_canvas_write (can, title);
 
-	if (panels->fun == PANEL_FUN_SNOW) {
+	if (panels->fun == PANEL_FUN_SNOW || panels->fun == PANEL_FUN_SAKURA) {
 		printSnow (panels);
 	}
 
@@ -2574,7 +3183,7 @@ static void doPanelsRefresh(RCore *core) {
 	}
 	core->panels->isResizing = true;
 	panelAllClear (core->panels);
-	r_core_panels_refresh (core);
+	panels_refresh (core);
 }
 
 static void doPanelsRefreshOneShot(RCore *core) {
@@ -2606,9 +3215,10 @@ static void panelSingleStepOver(RCore *core) {
 
 static void panelBreakpoint(RCore *core) {
 	RPanel *cur = getCurPanel (core->panels);
-	if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)) {
+	if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+				strcmp (cur->model->cmd, "pdc")) {
 		r_core_cmd (core, "dbs $$", 0);
-		cur->refresh = true;
+		cur->view->refresh = true;
 	}
 }
 
@@ -2616,7 +3226,7 @@ static void panelContinue(RCore *core) {
 	r_core_cmd (core, "dc", 0);
 }
 
-R_API void r_core_panels_check_stackbase(RCore *core) {
+static void panels_check_stackbase(RCore *core) {
 	if (!core || !core->panels) {
 		return;
 	}
@@ -2626,10 +3236,10 @@ R_API void r_core_panels_check_stackbase(RCore *core) {
 	RPanels *panels = core->panels;
 	for (i = 1; i < panels->n_panels; i++) {
 		RPanel *panel = getPanel (panels, i);
-		if (panel->cmd && !strcmp (panel->cmd, PANEL_CMD_STACK) && panel->baseAddr != stackbase) {
-			panel->baseAddr = stackbase;
-			panel->addr = stackbase - r_config_get_i (core->config, "stack.delta") + core->print->cur;
-			panel->refresh = true;
+		if (panel->model->cmd && !strncmp (panel->model->cmd, PANEL_CMD_STACK, strlen (PANEL_CMD_STACK)) && panel->model->baseAddr != stackbase) {
+			panel->model->baseAddr = stackbase;
+			panel->model->addr = stackbase - r_config_get_i (core->config, "stack.delta") + core->print->cur;
+			panel->view->refresh = true;
 		}
 	}
 }
@@ -2640,15 +3250,22 @@ static void panelPrompt(const char *prompt, char *buf, int len) {
 	r_cons_fgets (buf, len, 0, NULL);
 }
 
+static void initRotatedb(RPanels *panels) {
+	sdb_ptr_set (panels->rotate_db, "pd", &rotateDisasCb, 0);
+	sdb_ptr_set (panels->rotate_db, "p==", &rotateEntropyHCb, 0);
+	sdb_ptr_set (panels->rotate_db, "p=", &rotateEntropyVCb, 0);
+	sdb_ptr_set (panels->rotate_db, "px", &rotateHexdumpCb, 0);
+	sdb_ptr_set (panels->rotate_db, "dr", &rotateRegisterCb, 0);
+	sdb_ptr_set (panels->rotate_db, "af", &rotateFunctionCb, 0);
+}
+
 static void initSdb(RPanels *panels) {
 	sdb_set (panels->db, "Symbols", "isq", 0);
 	sdb_set (panels->db, "Stack"  , "px 256@r:SP", 0);
 	sdb_set (panels->db, "Locals", "afvd", 0);
-	sdb_set (panels->db, "StackRefs", "pxr 256@r:SP", 0);
-	sdb_set (panels->db, "Registers", "dr=", 0);
-	sdb_set (panels->db, "RegisterRefs", "drr", 0);
+	sdb_set (panels->db, "Registers", "dr", 0);
 	sdb_set (panels->db, "Disassembly", "pd $r", 0);
-	sdb_set (panels->db, "Pseudo", "pdc", 0);
+	sdb_set (panels->db, "Decompiler", "pdc", 0);
 	sdb_set (panels->db, "Graph", "agf", 0);
 	sdb_set (panels->db, "Info", "i", 0);
 	sdb_set (panels->db, "Database", "k ***", 0);
@@ -2656,6 +3273,7 @@ static void initSdb(RPanels *panels) {
 	sdb_set (panels->db, "Functions", "afl", 0);
 	sdb_set (panels->db, "Comments", "CC", 0);
 	sdb_set (panels->db, "Entropy", "p=e", 0);
+	sdb_set (panels->db, "Entropy Fire", "p==e", 0);
 	sdb_set (panels->db, "DRX", "drx", 0);
 	sdb_set (panels->db, "Sections", "iSq", 0);
 	sdb_set (panels->db, "Strings", "izq", 0);
@@ -2665,10 +3283,10 @@ static void initSdb(RPanels *panels) {
 	sdb_set (panels->db, "Breakpoints", "db", 0);
 	sdb_set (panels->db, "Imports", "iiq", 0);
 	sdb_set (panels->db, "Clipboard", "yx", 0);
-	sdb_set (panels->db, "FcnInfo", "afi", 0);
 	sdb_set (panels->db, "New", "o", 0);
 	sdb_set (panels->db, "Var READ address", "afvR", 0);
 	sdb_set (panels->db, "Var WRITE address", "afvW", 0);
+	sdb_set (panels->db, "Summary", "pdsf", 0);
 }
 
 static void mht_free_kv(HtPPKv *kv) {
@@ -2686,13 +3304,16 @@ static bool init(RCore *core, RPanels *panels, int w, int h) {
 		panels->layout = PANEL_LAYOUT_DEFAULT_STATIC;
 	}
 	panels->isResizing = false;
+	panels->autoUpdate = true;
 	panels->can = createNewCanvas (core, w, h);
 	panels->db = sdb_new0 ();
+	panels->rotate_db = sdb_new0 ();
 	panels->mht = ht_pp_new (NULL, (HtPPKvFreeFunc)mht_free_kv, (HtPPCalcSizeV)strlen);
-	panels->mode = PANEL_MODE_DEFAULT;
+	setMode (panels, PANEL_MODE_DEFAULT);
 	panels->fun = PANEL_FUN_NOFUN;
 	panels->prevMode = PANEL_MODE_DEFAULT;
 	initSdb (panels);
+	initRotatedb (panels);
 
 	if (w < 140) {
 		panels->columnWidth = w / 3;
@@ -2768,7 +3389,7 @@ static bool handleMenu(RCore *core, const int key) {
 			} else {
 				RPanelsMenuItem *parent = menu->history[menu->depth - 1];
 				parent->selectedIndex = R_MIN (parent->n_sub - 1, parent->selectedIndex + 1);
-				moveMenuCursor (menu, parent);
+				moveMenuCursor (core, menu, parent);
 			}
 		}
 		break;
@@ -2780,7 +3401,7 @@ static bool handleMenu(RCore *core, const int key) {
 			RPanelsMenuItem *parent = menu->history[menu->depth - 1];
 			if (parent->selectedIndex > 0) {
 				parent->selectedIndex--;
-				moveMenuCursor (menu, parent);
+				moveMenuCursor (core, menu, parent);
 			} else if (menu->depth == 2) {
 				menu->depth--;
 				setRefreshAll (panels, false);
@@ -2806,12 +3427,14 @@ static bool handleMenu(RCore *core, const int key) {
 			}
 		}
 		break;
+	case 'm':
 	case 'q':
 	case -1:
 		if (panels->panelsMenu->depth > 1) {
 			removeMenu (panels);
 		} else {
-			panels->mode = PANEL_MODE_DEFAULT;
+			setMode (panels, PANEL_MODE_DEFAULT);
+			getCurPanel (panels)->view->refresh = true;
 		}
 		break;
 	case '$':
@@ -2835,21 +3458,10 @@ static bool handleMenu(RCore *core, const int key) {
 		handleTabKey (core, true);
 		break;
 	case ':':
-		{
-			r_core_visual_prompt_input (core);
-			int i;
-			for (i = 0; i < panels->n_panels; i++) {
-				RPanel *p = getPanel (panels, i);
-				if (!strcmp (p->cmd, PANEL_CMD_DISASSEMBLY)) {
-					p->addr = core->offset;
-					break;
-				}
-			}
-			setRefreshAll (panels, false);
-		}
+		handlePrompt (core, panels);
 		break;
 	case '?':
-		showHelp (core, panels->mode);
+		toggleHelp (core);
 		break;
 	}
 	return true;
@@ -2859,11 +3471,11 @@ static void handleTabKey(RCore *core, bool shift) {
 	RPanels *panels = core->panels;
 	RPanel *cur = getCurPanel (panels);
 	r_cons_switchbuf (false);
-	cur->refresh = true;
+	cur->view->refresh = true;
 	if (!shift) {
 		if (panels->mode == PANEL_MODE_MENU) {
 			panels->curnode = 0;
-			panels->mode = PANEL_MODE_DEFAULT;
+			setMode (panels, PANEL_MODE_DEFAULT);
 		} else if (panels->mode == PANEL_MODE_ZOOM) {
 			if (panels->curnode == panels->n_panels - 1) {
 				panels->curnode = 0;
@@ -2872,7 +3484,7 @@ static void handleTabKey(RCore *core, bool shift) {
 			}
 		} else {
 			if (panels->curnode == panels->n_panels - 1) {
-				panels->mode = PANEL_MODE_MENU;
+				panels->curnode = 0;
 			} else {
 				panels->curnode++;
 			}
@@ -2880,7 +3492,7 @@ static void handleTabKey(RCore *core, bool shift) {
 	} else {
 		if (panels->mode == PANEL_MODE_MENU) {
 			panels->curnode = panels->n_panels - 1;
-			panels->mode = PANEL_MODE_DEFAULT;
+			setMode (panels, PANEL_MODE_DEFAULT);
 		} else if (panels->mode == PANEL_MODE_ZOOM) {
 			if (panels->curnode) {
 				panels->curnode--;
@@ -2891,37 +3503,38 @@ static void handleTabKey(RCore *core, bool shift) {
 			if (panels->curnode) {
 				panels->curnode--;
 			} else {
-				panels->mode = PANEL_MODE_MENU;
+				panels->curnode = panels->n_panels - 1;
 			}
 		}
 	}
 	cur = getCurPanel (panels);
-	if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)) {
+	if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+				strcmp (cur->model->cmd, "pdc")) {
 		setRefreshAll (panels, false);
 		return;
 	}
-	cur->refresh = true;
-	if (panels->fun == PANEL_FUN_SNOW) {
+	cur->view->refresh = true;
+	if (panels->fun == PANEL_FUN_SNOW || panels->fun == PANEL_FUN_SAKURA) {
 		resetSnow (panels);
 	}
 }
 
 static void savePanelPos(RPanel* panel) {
-	panel->prevPos.x = panel->pos.x;
-	panel->prevPos.y = panel->pos.y;
-	panel->prevPos.w = panel->pos.w;
-	panel->prevPos.h = panel->pos.h;
+	panel->view->prevPos.x = panel->view->pos.x;
+	panel->view->prevPos.y = panel->view->pos.y;
+	panel->view->prevPos.w = panel->view->pos.w;
+	panel->view->prevPos.h = panel->view->pos.h;
 }
 
 static void restorePanelPos(RPanel* panel) {
-	panel->pos.x = panel->prevPos.x;
-	panel->pos.y = panel->prevPos.y;
-	panel->pos.w = panel->prevPos.w;
-	panel->pos.h = panel->prevPos.h;
+	panel->view->pos.x = panel->view->prevPos.x;
+	panel->view->pos.y = panel->view->prevPos.y;
+	panel->view->pos.w = panel->view->prevPos.w;
+	panel->view->pos.h = panel->view->prevPos.h;
 }
 
 static char *getPanelsConfigPath() {
-	char *configPath = r_str_newf (R_JOIN_2_PATHS (R2_HOME_DATADIR, ".r2panels"));
+	char *configPath = r_str_new (R_JOIN_2_PATHS (R2_HOME_DATADIR, ".r2panels"));
 	if (!configPath) {
 		return NULL;
 	}
@@ -2930,8 +3543,7 @@ static char *getPanelsConfigPath() {
 	return newPath;
 }
 
-static void savePanelsLayout(RCore* core, bool temp) {
-	RPanels *panels = core->panels;
+static void savePanelsLayout(RPanels* panels, char **cfg, bool temp) {
 	int i;
 	PJ *pj = NULL;
 	pj = pj_new ();
@@ -2939,13 +3551,13 @@ static void savePanelsLayout(RCore* core, bool temp) {
 	for (i = 0; i < panels->n_panels; i++) {
 		RPanel *panel = getPanel (panels, i);
 		pj_o (pj);
-		pj_ks (pj, "Title", panel->title);
-		pj_ks (pj, "Cmd", panel->cmd);
-		pj_kn (pj, "x", panel->pos.x);
-		pj_kn (pj, "y", panel->pos.y);
-		pj_kn (pj, "w", panel->pos.w);
-		pj_kn (pj, "h", panel->pos.h);
-		pj_kb (pj, "caching", panel->caching);
+		pj_ks (pj, "Title", panel->model->title);
+		pj_ks (pj, "Cmd", panel->model->cmd);
+		pj_kn (pj, "x", panel->view->pos.x);
+		pj_kn (pj, "y", panel->view->pos.y);
+		pj_kn (pj, "w", panel->view->pos.w);
+		pj_kn (pj, "h", panel->view->pos.h);
+		pj_kb (pj, "cache", panel->model->cache);
 		pj_end (pj);
 	}
 	pj_end (pj);
@@ -2958,7 +3570,7 @@ static void savePanelsLayout(RCore* core, bool temp) {
 			fclose (panelsConfig);
 		}
 	} else {
-		core->panels_tmpcfg = strdup (pj_string (pj));
+		*cfg = r_str_new (pj_string (pj));
 	}
 	pj_free (pj);
 }
@@ -2968,7 +3580,7 @@ static char *parsePanelsConfig(const char *cfg, int len) {
 		eprintf ("Not valid config!\n");
 		return NULL;
 	}
-	char *tmp = strdup (cfg + 1);
+	char *tmp = r_str_new (cfg + 1);
 	int i = 0;
 	for (; i < len; i++) {
 		if (tmp[i] == '}' && i + 1 < len) {
@@ -2988,9 +3600,10 @@ static char *parsePanelsConfig(const char *cfg, int len) {
 	return tmp;
 }
 
-static int loadSavedPanelsLayout(RCore* core, bool temp) {
+static int loadSavedPanelsLayout(RCore *core, char *cfg, bool temp) {
 	int i, s;
 	char *panelsConfig;
+
 	if (!temp) {
 		char *configPath = getPanelsConfigPath ();
 		panelsConfig = r_file_slurp (configPath, &s);
@@ -3000,7 +3613,7 @@ static int loadSavedPanelsLayout(RCore* core, bool temp) {
 			return 0;
 		}
 	} else {
-		panelsConfig = core->panels_tmpcfg;
+		panelsConfig = cfg;
 	}
 	char *parsedConfig = parsePanelsConfig (panelsConfig, strlen (panelsConfig));
 	free (panelsConfig);
@@ -3012,23 +3625,35 @@ static int loadSavedPanelsLayout(RCore* core, bool temp) {
 	panelAllClear (panels);
 	panels->n_panels = 0;
 	panels->curnode = 0;
-	char *title, *cmd, *x, *y, *w, *h, *cfg = parsedConfig;
-	bool caching;
+	char *title, *cmd, *x, *y, *w, *h, *p_cfg = parsedConfig;
+	bool cache;
 	for (i = 1; i < count; i++) {
-		title = sdb_json_get_str (cfg, "Title");
-		cmd = sdb_json_get_str (cfg, "Cmd");
-		x = sdb_json_get_str (cfg, "x");
-		y = sdb_json_get_str (cfg, "y");
-		w = sdb_json_get_str (cfg, "w");
-		h = sdb_json_get_str (cfg, "h");
-		caching = sdb_json_get_bool (cfg, "caching");
+		title = sdb_json_get_str (p_cfg, "Title");
+		cmd = sdb_json_get_str (p_cfg, "Cmd");
+		(void)r_str_arg_unescape (cmd);
+		x = sdb_json_get_str (p_cfg, "x");
+		y = sdb_json_get_str (p_cfg, "y");
+		w = sdb_json_get_str (p_cfg, "w");
+		h = sdb_json_get_str (p_cfg, "h");
+		cache = sdb_json_get_bool (p_cfg, "cache");
 		RPanel *p = getPanel (panels, panels->n_panels);
-		p->pos.x = atoi (x);
-		p->pos.y = atoi (y);
-		p->pos.w = atoi (w);
-		p->pos.h = atoi (h);
-		addPanelFrame (core, title, cmd, caching);
-		cfg += strlen (cfg) + 1;
+		p->view->pos.x = atoi (x);
+		p->view->pos.y = atoi (y);
+		p->view->pos.w = atoi (w);
+		p->view->pos.h = atoi (h);
+		buildPanelParam(core, p, title, cmd, cache);
+		//TODO: Super hacky and refactoring is needed
+		if (r_str_endswith (cmd, "Help")) {
+			p->model->title = r_str_dup (p->model->title, "Help");
+			p->model->cmd = r_str_dup (p->model->cmd, "Help");
+			RStrBuf *rsb = r_strbuf_new (NULL);
+			r_core_visual_append_help (rsb, "Visual Ascii Art Panels", help_msg_panels);
+			if (!rsb) {
+				return 0;
+			}
+			setReadOnly (p, r_strbuf_drain (rsb));
+		}
+		p_cfg += strlen (p_cfg) + 1;
 	}
 	free (parsedConfig);
 	if (!panels->n_panels) {
@@ -3040,26 +3665,26 @@ static int loadSavedPanelsLayout(RCore* core, bool temp) {
 
 static void maximizePanelSize(RPanels *panels) {
 	RPanel *cur = getCurPanel (panels);
-	cur->pos.x = 0;
-	cur->pos.y = 1;
-	cur->pos.w = panels->can->w;
-	cur->pos.h = panels->can->h - 1;
-	cur->refresh = true;
+	cur->view->pos.x = 0;
+	cur->view->pos.y = 1;
+	cur->view->pos.w = panels->can->w;
+	cur->view->pos.h = panels->can->h - 1;
+	cur->view->refresh = true;
 }
 
 static void toggleZoomMode(RPanels *panels) {
 	RPanel *cur = getCurPanel (panels);
 	if (panels->mode != PANEL_MODE_ZOOM) {
 		panels->prevMode = panels->mode;
-		panels->mode = PANEL_MODE_ZOOM;
+		setMode (panels, PANEL_MODE_ZOOM);
 		savePanelPos (cur);
 		maximizePanelSize (panels);
 	} else {
-		panels->mode = panels->prevMode;
+		setMode (panels, panels->prevMode);
 		panels->prevMode = PANEL_MODE_DEFAULT;
 		restorePanelPos (cur);
 		setRefreshAll (panels, false);
-		if (panels->fun == PANEL_FUN_SNOW) {
+		if (panels->fun == PANEL_FUN_SNOW || panels->fun == PANEL_FUN_SAKURA) {
 			resetSnow (panels);
 		}
 	}
@@ -3068,74 +3693,86 @@ static void toggleZoomMode(RPanels *panels) {
 static void toggleWindowMode(RPanels *panels) {
 	if (panels->mode != PANEL_MODE_WINDOW) {
 		panels->prevMode = panels->mode;
-		panels->mode = PANEL_MODE_WINDOW;
+		setMode (panels, PANEL_MODE_WINDOW);
 	} else {
-		panels->mode = panels->prevMode;
+		setMode (panels, panels->prevMode);
 		panels->prevMode = PANEL_MODE_DEFAULT;
 	}
 }
 
-static void showHelp(RCore *core, RPanelsMode mode) {
-	RStrBuf *p = r_strbuf_new (NULL);
-	if (!p) {
+static void toggleCache (RPanel *p) {
+	p->model->cache = !p->model->cache;
+	setCmdStrCache (p, NULL);
+	p->view->refresh = true;
+}
+
+static void toggleHelp(RCore *core) {
+	RPanels *ps = core->panels;
+	int i;
+	for (i = 0; i < ps->n_panels; i++) {
+		RPanel *p = getPanel (ps, i);
+		if (r_str_endswith (p->model->cmd, "Help")) {
+			dismantleDelPanel (ps, p, i);
+			setRefreshAll (ps, false);
+			return;
+		}
+	}
+	if (ps->mode == PANEL_MODE_ZOOM) {
+		RStrBuf *p = r_strbuf_new (NULL);
+		if (!p) {
+			return;
+		}
+		r_cons_clear00 ();
+		r_core_visual_append_help (p, "Panels Zoom mode help", help_msg_panels_zoom);
+		(void)r_cons_less_str (r_strbuf_get (p), "?");
+		r_strbuf_free (p);
 		return;
 	}
-	r_cons_clear00 ();
-	const char *title;
-	const char **msg;
-	switch (mode) {
-	case PANEL_MODE_WINDOW:
-		title = "Panels Window mode help";
-		msg = help_msg_panels_window;
-		break;
-	case PANEL_MODE_ZOOM:
-		title = "Panels Zoom mode help";
-		msg = help_msg_panels_zoom;
-		break;
-	default:
-		title = "Visual Ascii Art Panels";
-		msg = help_msg_panels;
-		break;
-	}
-	r_core_visual_append_help (p, title, msg);
-	int ret = r_cons_less_str (r_strbuf_get (p), "?");
-	r_strbuf_free (p);
-	if (ret == '?') {
-		r_core_visual_hud (core);
-	}
+	addHelpPanel (core);
+	updateHelp (ps);
 }
 
 static void insertValue(RCore *core) {
+	if (!r_config_get_i (core->config, "io.cache")) {
+		if (r_cons_yesno ('y', "Insert is not available because io.cache is off. Turn on now?(Y/n)")) {
+			r_config_set_i (core->config, "io.cache", 1);
+			(void)r_cons_any_key ("io.cache is on and insert is available now.");
+		} else {
+			(void)r_cons_any_key ("You can always turn on io.cache in Menu->Edit->io.cache");
+			return;
+		}
+	}
 	RPanels *panels = core->panels;
 	RPanel *cur = getCurPanel (panels);
 	char buf[128];
-	if (!strcmp (cur->cmd, PANEL_CMD_STACK)) {
+	if (!strncmp (cur->model->cmd, PANEL_CMD_STACK, strlen (PANEL_CMD_STACK))) {
 		const char *prompt = "insert hex: ";
 		panelPrompt (prompt, buf, sizeof (buf));
-		r_core_cmdf (core, "wx %s @ 0x%08" PFMT64x, buf, cur->addr);
-		cur->refresh = true;
-	} else if (!strcmp (cur->cmd, PANEL_CMD_REGISTERS)) {
+		r_core_cmdf (core, "wx %s @ 0x%08" PFMT64x, buf, cur->model->addr);
+		cur->view->refresh = true;
+	} else if (!strncmp (cur->model->cmd, PANEL_CMD_REGISTERS, strlen (PANEL_CMD_REGISTERS))) {
 		const char *creg = core->dbg->creg;
 		if (creg) {
 			const char *prompt = "new-reg-value> ";
 			panelPrompt (prompt, buf, sizeof (buf));
 			r_core_cmdf (core, "dr %s = %s", creg, buf);
-			cur->refresh = true;
+			cur->view->refresh = true;
 		}
-	} else if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)) {
+	} else if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+					strcmp (cur->model->cmd, "pdc")) {
 		const char *prompt = "insert hex: ";
 		panelPrompt (prompt, buf, sizeof (buf));
 		r_core_cmdf (core, "wx %s @ 0x%08" PFMT64x, buf, core->offset + core->print->cur);
-		cur->refresh = true;
-	} else if (!strcmp (cur->cmd, PANEL_CMD_HEXDUMP)) {
+		cur->view->refresh = true;
+	} else if (!strncmp (cur->model->cmd, PANEL_CMD_HEXDUMP, strlen (PANEL_CMD_HEXDUMP))) {
 		const char *prompt = "insert hex: ";
 		panelPrompt (prompt, buf, sizeof (buf));
-		r_core_cmdf (core, "wx %s @ 0x%08" PFMT64x, buf, cur->addr + core->print->cur);
-		cur->refresh = true;
+		r_core_cmdf (core, "wx %s @ 0x%08" PFMT64x, buf, cur->model->addr + core->print->cur);
+		cur->view->refresh = true;
 	}
 }
 
-R_API RPanels *r_core_panels_new(RCore *core) {
+static RPanels *panels_new(RCore *core) {
 	RPanels *panels = R_NEW0 (RPanels);
 	if (!panels) {
 		return NULL;
@@ -3148,12 +3785,13 @@ R_API RPanels *r_core_panels_new(RCore *core) {
 	return panels;
 }
 
-R_API void r_core_panels_free(RPanels *panels) {
+static void panels_free(RPanels *panels) {
 	r_cons_switchbuf (true);
 	if (panels) {
 		freeAllPanels (panels);
 		r_cons_canvas_free (panels->can);
 		sdb_free (panels->db);
+		sdb_free (panels->rotate_db);
 		ht_pp_free (panels->mht);
 		free (panels);
 	}
@@ -3161,15 +3799,15 @@ R_API void r_core_panels_free(RPanels *panels) {
 
 static bool moveToDirection(RPanels *panels, Direction direction) {
 	RPanel *cur = getCurPanel (panels);
-	int cur_x0 = cur->pos.x, cur_x1 = cur->pos.x + cur->pos.w - 1, cur_y0 = cur->pos.y, cur_y1 = cur->pos.y + cur->pos.h - 1;
+	int cur_x0 = cur->view->pos.x, cur_x1 = cur->view->pos.x + cur->view->pos.w - 1, cur_y0 = cur->view->pos.y, cur_y1 = cur->view->pos.y + cur->view->pos.h - 1;
 	int temp_x0, temp_x1, temp_y0, temp_y1;
 	int i;
 	for (i = 0; i < panels->n_panels; i++) {
 		RPanel *p = getPanel (panels, i);
-		temp_x0 = p->pos.x;
-		temp_x1 = p->pos.x + p->pos.w - 1;
-		temp_y0 = p->pos.y;
-		temp_y1 = p->pos.y + p->pos.h - 1;
+		temp_x0 = p->view->pos.x;
+		temp_x1 = p->view->pos.x + p->view->pos.w - 1;
+		temp_y0 = p->view->pos.y;
+		temp_y1 = p->view->pos.y + p->view->pos.h - 1;
 		switch (direction) {
 		case LEFT:
 			if (temp_x1 == cur_x0) {
@@ -3214,58 +3852,372 @@ static bool moveToDirection(RPanels *panels, Direction direction) {
 	return false;
 }
 
-static void createDefaultPanels(RCore *core) {
+static void createNewPanel(RCore *core, bool vertical) {
 	RPanels *panels = core->panels;
-	panels->n_panels = 0;
-	addPanelFrame (core, PANEL_TITLE_DISASSEMBLY, PANEL_CMD_DISASSEMBLY, 0);
-
-	if (panels->layout == PANEL_LAYOUT_DEFAULT_DYNAMIC) {
-		addPanelFrame (core, PANEL_TITLE_STACKREFS, PANEL_CMD_STACKREFS, 0);
-		addPanelFrame (core, PANEL_TITLE_REGISTERS, PANEL_CMD_REGISTERS, 0);
-		addPanelFrame (core, PANEL_TITLE_REGISTERREFS, PANEL_CMD_REGISTERREFS,0);
-	} else {
-		addPanelFrame (core, PANEL_TITLE_FUNCTIONS, PANEL_CMD_FUNCTIONS, 0);
-		addPanelFrame (core, PANEL_TITLE_FCNINFO, PANEL_CMD_FCNINFO, 1);
-		addPanelFrame (core, PANEL_TITLE_SYMBOLS, PANEL_CMD_SYMBOLS, 0);
+	if (!checkPanelNum (panels)) {
+		return;
 	}
-	panels->curnode = 0;
-}
-
-R_API int r_core_visual_panels(RCore *core, RPanels *panels) {
-	int i, okey, key;
-
-	if (!panels) {
-		panels = r_core_panels_new (core);
-		if (!panels) {
-			r_core_panels_free (panels);
-			return false;
+	char *res = r_cons_input ("New panel with command: ");
+	if (res && *res) {
+		bool cache = r_cons_yesno ('y', "Cache the result? (Y/n)");
+		if (res && *res) {
+			if (vertical) {
+				splitPanelVertical (core, getCurPanel (panels), res, res, cache);
+			} else {
+				splitPanelHorizontal (core, getCurPanel (panels), res, res, cache);
+			}
 		}
 	}
-	RPanels *prev = core->panels;
-	core->panels = panels;
+	free (res);
+}
 
-	if (!initPanelsMenu (core)) {
-		return false;
+static void createDefaultPanels(RCore *core) {
+	RPanels *panels = core->panels;
+	panels->curnode = 0;
+	panels->n_panels = 0;
+	RAnalFunction *fun = r_anal_get_fcn_in (core->anal, core->offset, R_ANAL_FCN_TYPE_NULL);
+
+	bool decompiler_on = false;
+	if (fun && !r_list_empty (fun->bbs)) {
+		const char *msg = "Activate decompiler? It might take some time.(Y/n)";
+		decompiler_on = r_cons_yesno ('y', msg);
+	}
+	int i = 0;
+	if (panels->layout == PANEL_LAYOUT_DEFAULT_DYNAMIC) {
+		while (panels_dynamic[i]) {
+			RPanel *p = getPanel (panels, panels->n_panels);
+			if (!p) {
+				return;
+			}
+			const char *s = panels_dynamic[i++];
+			if (!strcmp (s, PANEL_TITLE_DECOMPILER)) {
+				if (!decompiler_on) {
+					continue;
+				}
+				buildPanelParam (core, p, s, sdb_get (panels->db, s, 0), 1);
+				continue;
+			}
+			buildPanelParam (core, p, s, sdb_get (panels->db, s, 0), 0);
+		}
+	} else {
+		while (panels_static[i]) {
+			RPanel *p = getPanel (panels, panels->n_panels);
+			if (!p) {
+				return;
+			}
+			const char *s = panels_static[i++];
+			if (!strcmp (s, PANEL_TITLE_DECOMPILER)) {
+				if (!decompiler_on) {
+					continue;
+				}
+				buildPanelParam (core, p, s, sdb_get (panels->db, s, 0), 1);
+				continue;
+			}
+			buildPanelParam (core, p, s, sdb_get (panels->db, s, 0), 0);
+		}
+	}
+}
+
+static void rotatePanels(RPanels *panels, bool rev) {
+	RPanel *first = getPanel (panels, 0);
+	RPanel *last = getPanel (panels, panels->n_panels - 1);
+	int i;
+	RPanelModel *tmp_model;
+	if (!rev) {
+		tmp_model = first->model;
+		for (i = 0; i < panels->n_panels - 1; i++) {
+			RPanel *p0 = getPanel (panels, i);
+			RPanel *p1 = getPanel (panels, i + 1);
+			p0->model = p1->model;
+		}
+		last->model = tmp_model;
+	} else {
+		tmp_model = last->model;
+		for (i = panels->n_panels - 1; i > 0; i--) {
+			RPanel *p0 = getPanel (panels, i);
+			RPanel *p1 = getPanel (panels, i - 1);
+			p0->model = p1->model;
+		}
+		first->model = tmp_model;
+	}
+	setRefreshAll (panels, false);
+}
+
+static void rotateDisasCb(void *user, bool rev) {
+	RCore *core = (RCore *)user;
+	RPanel *p = getCurPanel (core->panels);
+
+	//TODO: need to come up with a better solution but okay for now
+	if (!strcmp (p->model->cmd, "pdc")) {
+		return;
 	}
 
-	if (!initPanels (core, panels)) {
-		r_core_panels_free (panels);
+	if (rev) {
+		if (!p->model->rotate) {
+			p->model->rotate = 4;
+		} else {
+			p->model->rotate--;
+		}
+	} else {
+		p->model->rotate++;
+	}
+	r_core_visual_applyDisMode (core, p->model->rotate);
+	rotateAsmemu (core, p);
+}
+
+static void rotatePanelCmds(RCore *core, const char **cmds, const int cmdslen, const char *prefix, bool rev) {
+	if (!cmdslen) {
+		return;
+	}
+	RPanel *p = getCurPanel (core->panels);
+	if (rev) {
+		if (!p->model->rotate) {
+			p->model->rotate = cmdslen - 1;
+		} else {
+			p->model->rotate--;
+		}
+	} else {
+		p->model->rotate++;
+	}
+	char tmp[64], *between;
+	int i = p->model->rotate % cmdslen;
+	snprintf (tmp, sizeof (tmp), "%s%s", prefix, cmds[i]);
+	between = r_str_between (p->model->cmd, prefix, " ");
+	if (between) {
+		char replace[64];
+		snprintf (replace, sizeof (replace), "%s%s", prefix, between);
+		p->model->cmd = r_str_replace (p->model->cmd, replace, tmp, 1);
+	} else {
+		p->model->cmd = r_str_dup (p->model->cmd, tmp);
+	}
+	setCmdStrCache (p, NULL);
+	p->view->refresh = true;
+}
+
+static void rotateEntropyVCb(void *user, bool rev) {
+	RCore *core = (RCore *)user;
+	rotatePanelCmds (core, entropy_rotate, COUNT (entropy_rotate), "p=", rev);
+}
+
+static void rotateEntropyHCb(void *user, bool rev) {
+	RCore *core = (RCore *)user;
+	rotatePanelCmds (core, entropy_rotate, COUNT (entropy_rotate), "p==", rev);
+}
+
+static void rotateHexdumpCb (void *user, bool rev) {
+	RCore *core = (RCore *)user;
+	rotatePanelCmds (core, hexdump_rotate, COUNT (hexdump_rotate), "px", rev);
+}
+
+static void rotateRegisterCb (void *user, bool rev) {
+	RCore *core = (RCore *)user;
+	rotatePanelCmds (core, register_rotate, COUNT (register_rotate), "dr", rev);
+}
+
+static void rotateFunctionCb (void *user, bool rev) {
+	RCore *core = (RCore *)user;
+	rotatePanelCmds (core, function_rotate, COUNT (function_rotate), "af", rev);
+}
+
+static void undoSeek(RCore *core) {
+	RPanel *cur = getCurPanel (core->panels);
+	if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+				strcmp (cur->model->cmd, "pdc")) {
+		return;
+	}
+	RIOUndos *undo = r_io_sundo (core->io, core->offset);
+	if (undo) {
+		r_core_visual_seek_animation (core, undo->off);
+		cur->model->addr = core->offset;
+		cur->view->refresh = true;
+	}
+}
+
+static void redoSeek(RCore *core) {
+	RPanel *cur = getCurPanel (core->panels);
+	if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+				strcmp (cur->model->cmd, "pdc")) {
+		return;
+	}
+	RIOUndos *undo = r_io_sundo_redo (core->io);
+	if (undo) {
+		r_core_visual_seek_animation (core, undo->off);
+		cur->model->addr = core->offset;
+		cur->view->refresh = true;
+	}
+}
+
+static void rotateAsmemu(RCore *core, RPanel *p) {
+	const bool isEmuStr = r_config_get_i (core->config, "emu.str");
+	const bool isEmu = r_config_get_i (core->config, "asm.emu");
+	if (isEmu) {
+		if (isEmuStr) {
+			r_config_set (core->config, "emu.str", "false");
+		} else {
+			r_config_set (core->config, "asm.emu", "false");
+		}
+	} else {
+		r_config_set (core->config, "emu.str", "true");
+	}
+	p->view->refresh = true;
+}
+
+R_API int r_core_visual_panels_root(RCore *core, RPanelsRoot *panels_root) {
+	if (!panels_root) {
+		panels_root = R_NEW0 (RPanelsRoot);
+		if (!panels_root) {
+			return false;
+		}
+		core->panels_root = panels_root;
+		panels_root->panels = calloc (sizeof (RPanels *), PANEL_NUM_LIMIT);
+		panels_root->n_panels = 1;
+		panels_root->cur_panels = 0;
+	} else {
+		if (!panels_root->n_panels) {
+			panels_root->n_panels = 1;
+			panels_root->cur_panels = 0;
+		}
+	}
+	bool force_quit = false;
+	int i;
+	while (panels_root->n_panels) {
+		if (panels_process (core, &panels_root->panels[panels_root->cur_panels], &force_quit)) {
+			if (force_quit) {
+				for (int i = 0; i < panels_root->n_panels; i++) {
+					RPanels *panels = panels_root->panels[i];
+					if (!panels || !panels->cfg) {
+						continue;
+					}
+					savePanelsLayout (panels, &panels->cfg, true);
+				}
+				return true;
+			} else {
+				panels_free (panels_root->panels[panels_root->cur_panels]);
+				panels_root->panels[panels_root->cur_panels] = NULL;
+				for (i = panels_root->cur_panels; i < panels_root->n_panels - 1; i++) {
+					panels_root->panels[i] = panels_root->panels[i + 1];
+				}
+				panels_root->n_panels--;
+				if (panels_root->cur_panels >= panels_root->n_panels) {
+					panels_root->cur_panels = panels_root->n_panels - 1;
+				}
+			}
+		}
+	}
+	return true;
+}
+
+static bool handle_tab(RCore *core) {
+	int ch = r_cons_any_key ("[Tab] nkey:nth; p:prev; n:next; t:new");
+	if (handle_tab_nth (core, ch)) {
+		return true;
+	}
+	switch (ch) {
+		case 'n':
+			if (handle_tab_next (core)) {
+				return true;
+			}
+			break;
+		case 'p':
+			if (handle_tab_prev (core)) {
+				return true;
+			}
+			break;
+		case 't':
+			(void)handle_tab_new (core);
+			break;
+	}
+	return false;
+}
+
+static bool handle_tab_nth(RCore *core, int ch) {
+	RPanels *panels = core->panels;
+	if (isdigit (ch)) {
+		ch -= '0' + 1;
+		if (ch != core->panels_root->cur_panels && ch < core->panels_root->n_panels) {
+			core->panels_root->cur_panels = ch;
+			savePanelsLayout (panels, &panels->cfg, true);
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool handle_tab_next(RCore *core) {
+	RPanels *panels = core->panels;
+	if (core->panels_root->n_panels <= 1) {
 		return false;
+	}
+	core->panels_root->cur_panels++;
+	core->panels_root->cur_panels %= core->panels_root->n_panels;
+	savePanelsLayout (panels, &panels->cfg, true);
+	return true;
+}
+
+
+static bool handle_tab_prev(RCore *core) {
+	RPanels *panels = core->panels;
+	if (core->panels_root->n_panels <= 1) {
+		return false;
+	}
+	core->panels_root->cur_panels--;
+	if (core->panels_root->cur_panels < 0) {
+		core->panels_root->cur_panels = core->panels_root->n_panels - 1;
+	}
+	savePanelsLayout (panels, &panels->cfg, true);
+	return true;
+}
+
+static bool handle_tab_new(RCore *core) {
+	if (core->panels_root->n_panels >= PANEL_NUM_LIMIT) {
+		return false;
+	}
+	core->panels_root->n_panels++;
+	return true;
+}
+
+static int panels_process(RCore *core, RPanels **r_panels, bool *force_quit) {
+	int i, okey, key;
+
+	RPanels *panels;
+	RPanels *prev;
+	if (!*r_panels) {
+		panels = panels_new (core);
+		if (!panels) {
+			panels_free (panels);
+			return true;
+		}
+		prev = core->panels;
+		core->panels = panels;
+		if (!initPanelsMenu (core)) {
+			return true;
+		}
+		if (!initPanels (core, panels)) {
+			panels_free (panels);
+			return true;
+		}
+		*r_panels = panels;
+	} else {
+		prev = core->panels;
+		panels = *r_panels;
+		core->panels = panels;
 	}
 
 	r_cons_switchbuf (false);
+
 	int originCursor = core->print->cur;
 	core->print->cur = 0;
 	core->print->cur_enabled = false;
 	core->print->col = 0;
+
 	bool originVmode = core->vmode;
 	core->vmode = true;
 
 	r_cons_enable_mouse (false);
 
-	if (!core->panels_tmpcfg || !loadSavedPanelsLayout (core, true)) {
+	if (!panels->cfg || !loadSavedPanelsLayout (core, panels->cfg, true)) {
 		createDefaultPanels (core);
-		r_core_panels_layout (panels);
+		panels_layout (panels);
 	}
 
 	loadLayoutSavedCb(core);
@@ -3274,12 +4226,19 @@ repeat:
 	core->cons->event_resize = NULL; // avoid running old event with new data
 	core->cons->event_data = core;
 	core->cons->event_resize = (RConsEvent) doPanelsRefreshOneShot;
-	r_core_panels_layout_refresh (core);
+	panels_layout_refresh (core);
 	RPanel *cur = getCurPanel (panels);
-	if (panels->mode != PANEL_MODE_MENU && panels->fun == PANEL_FUN_SNOW) {
-		okey = r_cons_readchar_timeout (300);
-		if (okey == -1) {
-			cur->refresh = true;
+	if (panels->fun == PANEL_FUN_SNOW || panels->fun == PANEL_FUN_SAKURA) {
+		if (panels->mode != PANEL_MODE_MENU) {
+			okey = r_cons_readchar_timeout (300);
+			if (okey == -1) {
+				cur->view->refresh = true;
+				goto repeat;
+			}
+		} else {
+			panels->fun = PANEL_FUN_NOFUN;
+			resetSnow (panels);
+			setRefreshAll (panels, false);
 			goto repeat;
 		}
 	} else {
@@ -3313,12 +4272,12 @@ repeat:
 		}
 	}
 
-	if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)
-			&& '0' < key && key <= '9') {
+	if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+				strcmp (cur->model->cmd, "pdc") && '0' < key && key <= '9') {
 		ut8 ch = key;
 		r_core_visual_jump (core, ch);
-		cur->addr = core->offset;
-		cur->refresh = true;
+		cur->model->addr = core->offset;
+		cur->view->refresh = true;
 		goto repeat;
 	}
 
@@ -3326,33 +4285,20 @@ repeat:
 	RConsCanvas *can = panels->can;
 	switch (key) {
 	case 'u':
-		r_core_cmd0 (core, "s-");
+		undoSeek (core);
 		break;
 	case 'U':
-		r_core_cmd0 (core, "s+");
-		break;
-	case 'n':
-	case 'N':
-		{
-			if (!checkPanelNum (panels)) {
-				break;
-			}
-			char *res = r_cons_input ("New panel with command: ");
-			bool caching = r_cons_yesno ('y', "Cache the result? (Y/n)");
-			if (res && *res) {
-				createNewPanel (core, res, res, caching);
-			}
-			free (res);
-		}
+		redoSeek (core);
 		break;
 	case 'p':
-		r_core_cmd0 (core, "sp");
+		rotatePanels (panels, false);
 		break;
 	case 'P':
-		r_core_cmd0 (core, "sn");
+		rotatePanels (panels, true);
 		break;
 	case '.':
-		if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)) {
+		if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+					strcmp (cur->model->cmd, "pdc")) {
 			ut64 addr = r_debug_reg_get (core->dbg, "PC");
 			if (addr && addr != UT64_MAX) {
 				r_core_seek (core, addr, 1);
@@ -3362,34 +4308,32 @@ repeat:
 					r_core_seek (core, addr, 1);
 				}
 			}
-			cur->addr = core->offset;
-			cur->refresh = true;
+			cur->model->addr = core->offset;
+			cur->view->refresh = true;
 		}
 		break;
 	case '?':
-		showHelp (core, panels->mode);
+		toggleHelp (core);
 		break;
 	case 'b':
 		r_core_visual_browse (core, NULL);
 		break;
-	case 'o':
-		r_core_visual_showcursor (core, true);
-		r_core_visual_offset (core);
-		r_core_visual_showcursor (core, false);
-		cur->addr = core->offset;
-		cur->refresh = true;
+	case ';':
+		handleComment (core);
 		break;
 	case 's':
 		panelSingleStepIn (core);
-		if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)) {
-			cur->addr = core->offset;
+		if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+					strcmp (cur->model->cmd, "pdc")) {
+			cur->model->addr = core->offset;
 		}
 		setRefreshAll (panels, false);
 		break;
 	case 'S':
 		panelSingleStepOver (core);
-		if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)) {
-			cur->addr = core->offset;
+		if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+					strcmp (cur->model->cmd, "pdc")) {
+			cur->model->addr = core->offset;
 		}
 		setRefreshAll (panels, false);
 		break;
@@ -3402,21 +4346,34 @@ repeat:
 		break;
 	case ':':
 		r_core_visual_prompt_input (core);
-		cur->addr = core->offset;
+		cur->model->addr = core->offset;
 		setRefreshAll (panels, false);
 		break;
 	case 'c':
 		activateCursor (core);
 		break;
 	case 'C':
-		can->color = !can->color;
-		// r_config_toggle (core->config, "scr.color");
-		// refresh graph
-		setRefreshAll (panels, false);
+		{
+			int color = r_config_get_i (core->config, "scr.color");
+			if (++color > 2) {
+				color = 0;
+			}
+			r_config_set_i (core->config, "scr.color", color);
+			can->color = color;
+			setRefreshAll (panels, true);
+		}
 		break;
 	case 'r':
-		r_core_cmd0 (core, "e!asm.hint.jmp");
-		r_core_cmd0 (core, "e!asm.hint.lea");
+		if (r_config_get_i (core->config, "asm.hint.call")) {
+			r_core_cmd0 (core, "e!asm.hint.call");
+			r_core_cmd0 (core, "e!asm.hint.jmp");
+		} else if (r_config_get_i (core->config, "asm.hint.jmp")) {
+			r_core_cmd0 (core, "e!asm.hint.jmp");
+			r_core_cmd0 (core, "e!asm.hint.lea");
+		} else if (r_config_get_i (core->config, "asm.hint.lea")) {
+			r_core_cmd0 (core, "e!asm.hint.lea");
+			r_core_cmd0 (core, "e!asm.hint.call");
+		}
 		setRefreshAll (panels, false);
 		break;
 	case 'R':
@@ -3427,6 +4384,9 @@ repeat:
 		}
 		doPanelsRefresh (core);
 		break;
+	case 'a':
+		panels->autoUpdate = r_cons_yesno ('y', "Auto update On? (Y/n)");
+		break;
 	case 'A':
 		r_core_visual_asm (core, core->offset);
 		break;
@@ -3435,38 +4395,82 @@ repeat:
 		setRefreshAll (panels, false);
 		break;
 	case 'D':
-		replaceCmd (panels, PANEL_TITLE_DISASSEMBLY, PANEL_CMD_DISASSEMBLY, 0);
+		replaceCmd (core, PANEL_TITLE_DISASSEMBLY, PANEL_CMD_DISASSEMBLY, 0);
 		break;
 	case 'j':
 		r_cons_switchbuf (false);
-		cur->directionCb (core, (int)DOWN);
+		if (cur->model->directionCb) {
+			cur->model->directionCb (core, (int)DOWN);
+		}
 		break;
 	case 'k':
 		r_cons_switchbuf (false);
-		cur->directionCb (core, (int)UP);
+		if (cur->model->directionCb) {
+			cur->model->directionCb (core, (int)UP);
+		}
 		break;
 	case 'K':
 		r_cons_switchbuf (false);
-		for (i = 0; i < PANEL_CONFIG_PAGE; i++) {
-			cur->directionCb (core, (int)UP);
+		if (cur->model->directionCb) {
+			for (i = 0; i < getCurPanel (panels)->view->pos.h / 2 - 6; i++) {
+				cur->model->directionCb (core, (int)UP);
+			}
 		}
 		break;
 	case 'J':
 		r_cons_switchbuf (false);
-		for (i = 0; i < PANEL_CONFIG_PAGE; i++) {
-			cur->directionCb (core, (int)DOWN);
+		if (cur->model->directionCb) {
+			for (i = 0; i < getCurPanel (panels)->view->pos.h / 2 - 6; i++) {
+				cur->model->directionCb (core, (int)DOWN);
+			}
+		}
+		break;
+	case 'H':
+		r_cons_switchbuf (false);
+		if (cur->model->directionCb) {
+			for (i = 0; i < getCurPanel (panels)->view->pos.w / 3; i++) {
+				cur->model->directionCb (core, (int)LEFT);
+			}
+		}
+		break;
+	case 'L':
+		r_cons_switchbuf (false);
+		if (cur->model->directionCb) {
+			for (i = 0; i < getCurPanel (panels)->view->pos.w / 3; i++) {
+				cur->model->directionCb (core, (int)RIGHT);
+			}
 		}
 		break;
 	case '_':
 		hudstuff (core);
 		break;
+	case '\\':
+		r_core_visual_hud (core);
+		break;
+	case 'n':
+		if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+				strcmp (cur->model->cmd, "pdc")) {
+			r_core_seek_next (core, r_config_get (core->config, "scr.nkey"));
+			cur->model->addr = core->offset;
+			cur->view->refresh = true;
+		}
+		break;
+	case 'N':
+		if (!strncmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY, strlen (PANEL_CMD_DISASSEMBLY)) &&
+				strcmp (cur->model->cmd, "pdc")) {
+			r_core_seek_previous (core, r_config_get (core->config, "scr.nkey"));
+			cur->model->addr = core->offset;
+			cur->view->refresh = true;
+		}
+		break;
 	case 'x':
 		r_core_visual_refs (core, true, true);
-		cur->addr = core->offset;
+		cur->model->addr = core->offset;
 		setRefreshAll (panels, false);
 		break;
 	case 'X':
-		delCurPanel (panels);
+		r_core_visual_refs (core, false, true);
+		cur->model->addr = core->offset;
 		setRefreshAll (panels, false);
 		break;
 	case 9: // TAB
@@ -3482,9 +4486,9 @@ repeat:
 		}
 		char *name = r_cons_input ("Name: ");
 		char *cmd = r_cons_input ("Command: ");
-		bool caching = r_cons_yesno ('y', "Cache the result? (Y/n)");
+		bool cache = r_cons_yesno ('y', "Cache the result? (Y/n)");
 		if (name && *name && cmd && *cmd) {
-			createNewPanel (core, name, cmd, caching);
+			addNewPanel (core, name, cmd, cache);
 		}
 		free (name);
 		free (cmd);
@@ -3494,32 +4498,42 @@ repeat:
 	{
 		char *new_name = r_cons_input ("New name: ");
 		char *new_cmd = r_cons_input ("New command: ");
-		bool caching = r_cons_yesno ('y', "Cache the result? (Y/n)");
+		bool cache = r_cons_yesno ('y', "Cache the result? (Y/n)");
 		if (new_name && *new_name && new_cmd && *new_cmd) {
-			replaceCmd (panels, new_name, new_cmd, caching);
+			replaceCmd (core, new_name, new_cmd, cache);
 		}
 		free (new_name);
 		free (new_cmd);
 	}
-	break;
+		break;
 	case 'm':
-		panels->mode = PANEL_MODE_MENU;
+		setMode (panels, PANEL_MODE_MENU);
+		clearPanelsMenu (core);
+		getCurPanel (panels)->view->refresh = true;
 		break;
 	case 'g':
+		r_core_visual_showcursor (core, true);
+		r_core_visual_offset (core);
+		r_core_visual_showcursor (core, false);
+		cur->model->addr = core->offset;
+		cur->view->refresh = true;
+		break;
+	case 'G':
 		if (checkFunc (core)) {
-			replaceCmd (panels, PANEL_TITLE_GRAPH, PANEL_CMD_GRAPH, 1);
+			replaceCmd (core, PANEL_TITLE_GRAPH, PANEL_CMD_GRAPH, 1);
 		}
 		break;
 	case 'h':
 		r_cons_switchbuf (false);
-		cur->directionCb (core, (int)LEFT);
+		if (cur->model->directionCb) {
+			cur->model->directionCb (core, (int)LEFT);
+		}
 		break;
 	case 'l':
 		r_cons_switchbuf (false);
-		cur->directionCb (core, (int)RIGHT);
-		break;
-	case 'L':
-		setRefreshAll (panels, true);
+		if (cur->model->directionCb) {
+			cur->model->directionCb (core, (int)RIGHT);
+		}
 		break;
 	case 'V':
 		if (r_config_get_i (core->config, "graph.web")) {
@@ -3544,6 +4558,28 @@ repeat:
 			setRefreshAll (panels, false);
 		}
 		break;
+	case 'i':
+		if (cur->model->rotateCb) {
+			cur->model->rotateCb (core, false);
+			cur->view->refresh = true;
+		}
+		break;
+	case 'I':
+		if (cur->model->rotateCb) {
+			cur->model->rotateCb (core, true);
+			cur->view->refresh = true;
+		}
+		break;
+	case 't':
+		if (handle_tab (core)) {
+			return false;
+		}
+		break;
+	case 'T':
+		if (core->panels_root->n_panels > 1) {
+			goto exit;
+		}
+		break;
 	case 'w':
 		toggleWindowMode (panels);
 		setRefreshAll (panels, false);
@@ -3552,29 +4588,44 @@ repeat:
 		toggleZoomMode (panels);
 		break;
 	case '|':
-		splitPanelVertical (core);
-		break;
+		{
+			RPanel *p = getCurPanel (panels);
+			splitPanelVertical (core, p, p->model->title, p->model->cmd, p->model->cache);
+			break;
+		}
 	case '-':
-		splitPanelHorizontal (core);
-		break;
+		{
+			RPanel *p = getCurPanel (panels);
+			splitPanelHorizontal (core, p, p->model->title, p->model->cmd, p->model->cache);
+			break;
+		}
 	case '*':
 		if (checkFunc (core)) {
 			r_cons_canvas_free (can);
 			panels->can = NULL;
 
-			replaceCmd (panels, PANEL_TITLE_PSEUDO, PANEL_CMD_PSEUDO, 1);
+			replaceCmd (core, PANEL_TITLE_DECOMPILER, "pdc", 1);
 
 			int h, w = r_cons_get_size (&h);
 			panels->can = createNewCanvas (core, w, h);
 		}
 		break;
 	case '(':
-		if (panels->fun != PANEL_FUN_SNOW) {
-			panels->fun = PANEL_FUN_SNOW;
+		if (panels->fun != PANEL_FUN_SNOW && panels->fun != PANEL_FUN_SAKURA) {
+			//TODO: Refactoring the FUN if bored af
+			//panels->fun = PANEL_FUN_SNOW;
+			panels->fun = PANEL_FUN_SAKURA;
 		} else {
 			panels->fun = PANEL_FUN_NOFUN;
 			resetSnow (panels);
 		}
+		break;
+	case ')':
+		rotateAsmemu (core, getCurPanel (panels));
+		break;
+	case '&':
+		toggleCache (getCurPanel (panels));
+		resetScrollPos (getCurPanel (panels));
 		break;
 	case R_CONS_KEY_F1:
 		cmd = r_config_get (core->config, "key.f1");
@@ -3664,9 +4715,10 @@ repeat:
 			(void)r_core_cmd0 (core, cmd);
 		}
 		break;
+	case 'Q':
+		*force_quit = true;
+		goto exit;
 	case '!':
-		r_cons_2048 (core->panels->can->color);
-		break;
 	case 'q':
 	case -1: // EOF
 		goto exit;
@@ -3684,15 +4736,12 @@ repeat:
 	}
 	goto repeat;
 exit:
-	savePanelsLayout (core, true);
 	core->cons->event_resize = NULL;
 	core->cons->event_data = NULL;
 	core->print->cur = originCursor;
 	core->print->cur_enabled = false;
 	core->print->col = 0;
 	core->vmode = originVmode;
-
-	r_core_panels_free (panels);
 	core->panels = prev;
 	return true;
 }

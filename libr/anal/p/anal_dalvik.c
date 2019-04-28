@@ -15,13 +15,13 @@ static const char *getCond(ut8 cond) {
 	case 0x33: // if-ne
 		return "$z,!";
 	case 0x34: // if-lt
-		return "$c63,!";
+		return "63,$c,!";
 	case 0x35: // if-ge
-		return "$c63,$z,|";
+		return "63,$c,$z,|";
 	case 0x36: // if-gt
-		return "$c63";
+		return "63,$c";
 	case 0x37: // if-le
-		return "$c63,!,$z,|";
+		return "63,$c,!,$z,|";
 	}
 	return "";
 }
@@ -33,18 +33,18 @@ static const char *getCondz(ut8 cond) {
 	case 0x39: // if-nez
 		return "!";
 	case 0x3a: // if-ltz
-		return "0,==,$c63,!";
+		return "0,==,63,$c,!";
 	case 0x3b: // if-gez
-		return "0,==,$c63,$z,|";
+		return "0,==,63,$c,$z,|";
 	case 0x3c: // if-gtz
-		return "0,==,$c63";
+		return "0,==,63,$c";
 	case 0x3d: // if-lez
-		return "0,==,$c63,!";
+		return "0,==,63,$c,!";
 	}
 	return "";
 }
 
-static int dalvik_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, int len) {
+static int dalvik_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *data, int len, RAnalOpMask mask) {
 	int sz = dalvik_opcodes[data[0]].len;
 	if (!op || sz >= len) {
 		return sz;

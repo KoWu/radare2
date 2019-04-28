@@ -5,7 +5,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
-#include <unistd.h>
 #include <r_types.h>
 #include <r_util.h>
 #include <r_bin.h>
@@ -3111,7 +3110,9 @@ R_API RBinJavaObj *r_bin_java_new_buf(RBuffer *buf, ut64 loadaddr, Sdb *kv) {
 	if (!bin) {
 		return NULL;
 	}
-	if (!r_bin_java_new_bin (bin, loadaddr, kv, buf->buf, buf->length)) {
+	ut64 tmpsz;
+	const ut8 *tmp = r_buf_buffer (buf, &tmpsz);
+	if (!r_bin_java_new_bin (bin, loadaddr, kv, tmp, tmpsz)) {
 		return r_bin_java_free (bin);
 	}
 	return bin;

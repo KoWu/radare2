@@ -189,6 +189,7 @@ static void print_debug_maps_ascii_art(RDebug *dbg, RList *maps, ut64 addr, int 
 	int width = r_cons_get_size (NULL) - 90;
 	RListIter *iter;
 	RDebugMap *map;
+	RConsPrintablePalette *pal = &r_cons_singleton ()->context->pal;
 	if (width < 1) {
 		width = 30;
 	}
@@ -205,10 +206,12 @@ static void print_debug_maps_ascii_art(RDebug *dbg, RList *maps, ut64 addr, int 
 			r_num_units (humansz, sizeof (humansz), map->size); // Convert map size to human readable string
 			if (colors) {
 				color_suffix = Color_RESET;
-				if (map->perm & 2) { // Writable maps are red
-					color_prefix = Color_RED;
-				} else if (map->perm & 1) { // Executable maps are green
-					color_prefix = Color_GREEN;
+				if ((map->perm & 2) && (map->perm & 1)) { // Writable & Executable
+					color_prefix = pal->widget_sel;
+				} else if (map->perm & 2) { // Writable
+					color_prefix = pal->graph_false;
+				} else if (map->perm & 1) { // Executable
+					color_prefix = pal->graph_true;
 				} else {
 					color_prefix = "";
 					color_suffix = "";

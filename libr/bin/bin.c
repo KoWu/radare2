@@ -1,4 +1,4 @@
-/* radare2 - LGPL - Copyright 2009-2018 - pancake, nibble, dso */
+/* radare2 - LGPL - Copyright 2009-2019 - pancake, nibble, dso */
 
 #include <r_bin.h>
 #include <r_types.h>
@@ -120,11 +120,22 @@ R_API void r_bin_arch_options_init(RBinArchOptions *opt, const char *arch, int b
 	opt->bits = bits? bits: R_SYS_BITS;
 }
 
+R_API void r_bin_file_hash_free(RBinFileHash *fhash) {
+	if (!fhash) {
+		return;
+	}
+
+	R_FREE (fhash->type);
+	R_FREE (fhash->hex);
+	free (fhash);
+}
+
 R_API void r_bin_info_free(RBinInfo *rb) {
 	if (!rb) {
 		return;
 	}
-	free (rb->hashes);
+
+	r_list_free (rb->file_hashes);
 	free (rb->intrp);
 	free (rb->file);
 	free (rb->type);
@@ -140,6 +151,7 @@ R_API void r_bin_info_free(RBinInfo *rb) {
 	free (rb->debug_file_name);
 	free (rb->actual_checksum);
 	free (rb->claimed_checksum);
+	free (rb->compiler);
 	free (rb);
 }
 
@@ -224,14 +236,12 @@ R_API int r_bin_reload(RBin *bin, int fd, ut64 baseaddr) {
 	RIOBind *iob = &(bin->iob);
 	RList *the_obj_list = NULL;
 	int res = false;
-	RBinFile *bf = NULL;
 	ut8 *buf_bytes = NULL;
-	ut64 sz = UT64_MAX;
 
 	r_return_val_if_fail (bin && iob && iob->io, false);
 
 	const char *name = iob->fd_get_name (iob->io, fd);
-	bf = r_bin_file_find_by_name (bin, name);
+	RBinFile *bf = r_bin_file_find_by_name (bin, name);
 	if (!bf) {
 		res = false;
 		goto error;
@@ -240,12 +250,15 @@ R_API int r_bin_reload(RBin *bin, int fd, ut64 baseaddr) {
 	bf->objs = r_list_newf ((RListFree)r_bin_object_free);
 	// invalidate current object reference
 	bf->o = NULL;
-	sz = iob->fd_size (iob->io, fd);
+	ut64 sz = iob->fd_size (iob->io, fd);
+	if (sz == UT64_MAX) {
+		sz = 128 * 1024;
+	}
 	// TODO: deprecate, the code in the else should be enough
 	if (sz == UT64_MAX) {
 		if (!iob->fd_is_dbg (iob->io, fd)) {
 			// too big, probably wrong
-			eprintf ("Too big\n");
+			eprintf ("Warning: file is too big and not in debugger\n");
 			res = false;
 			goto error;
 		}
@@ -1004,6 +1017,13 @@ R_API int r_bin_select_by_ids(RBin *bin, ut32 binfile_id, ut32 binobj_id) {
 	} else {
 		binfile = r_bin_file_find_by_id (bin, binfile_id);
 		obj = binfile? r_bin_file_object_find_by_id (binfile, binobj_id): NULL;
+		if (!binfile || !obj) {
+			/// binobj_id : holds the binobj counter which should die
+			// binfile_id contains the actual binobj_id
+			// workaround to fix the binid, objid, binfd mess :facepalm:
+			binfile = r_bin_file_find_by_object_id (bin, binfile_id);
+			obj = binfile? r_bin_file_object_find_by_id (binfile, binfile_id): NULL;
+		}
 	}
 	return r_bin_file_set_cur_binfile_obj (bin, binfile, obj);
 }

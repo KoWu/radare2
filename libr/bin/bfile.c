@@ -1,4 +1,4 @@
-/* radare2 - LGPL - Copyright 2009-2018 - pancake, nibble, dso */
+/* radare2 - LGPL - Copyright 2009-2019 - pancake, nibble, dso */
 
 #include <r_bin.h>
 #include <r_hash.h>
@@ -54,14 +54,14 @@ static void print_string(RBinFile *bf, RBinString *string, int raw) {
 		r_name_filter (f_name, 512);
 		if (bin->prefix) {
 			nstr = r_str_newf ("%s.str.%s", bin->prefix, f_name);
-			io->cb_printf ("f %s.str.%s %"PFMT64d" @ 0x%08"PFMT64x"\n"
-					"Cs %"PFMT64d" @ 0x%08"PFMT64x"\n",
+			io->cb_printf ("f %s.str.%s %u @ 0x%08"PFMT64x"\n"
+					"Cs %u @ 0x%08"PFMT64x"\n",
 					bin->prefix, f_name, string->size, addr,
 					string->size, addr);
 		} else {
 			nstr = r_str_newf ("str.%s", f_name);
-			io->cb_printf ("f str.%s %"PFMT64d" @ 0x%08"PFMT64x"\n"
-					"Cs %"PFMT64d" @ 0x%08"PFMT64x"\n",
+			io->cb_printf ("f str.%s %u @ 0x%08"PFMT64x"\n"
+					"Cs %u @ 0x%08"PFMT64x"\n",
 					f_name, string->size, addr,
 					string->size, addr);
 		}
@@ -291,8 +291,6 @@ static void get_strings_range(RBinFile *bf, RList *list, int min, int raw, ut64 
 	r_return_if_fail (bf && bf->buf);
 
 	RBinPlugin *plugin = r_bin_file_cur_plugin (bf);
-	RBinString *ptr;
-	RListIter *it;
 
 	if (!raw && (!plugin || !plugin->info)) {
 		return;
@@ -307,7 +305,7 @@ static void get_strings_range(RBinFile *bf, RList *list, int min, int raw, ut64 
 	if (min < 0) {
 		return;
 	}
-	if (!to || to > bf->buf->length) {
+	if (!to || to > r_buf_size (bf->buf)) {
 		to = r_buf_size (bf->buf);
 	}
 	if (!to) {
@@ -518,7 +516,7 @@ R_IPI RBinObject *r_bin_file_object_find_by_id(RBinFile *binfile, ut32 binobj_id
 	return NULL;
 }
 
-R_IPI RBinFile *r_bin_file_find_by_object_id(RBin *bin, ut32 binobj_id) {
+R_API RBinFile *r_bin_file_find_by_object_id(RBin *bin, ut32 binobj_id) {
 	RListIter *iter;
 	RBinFile *binfile;
 	r_list_foreach (bin->binfiles, iter, binfile) {
@@ -849,10 +847,10 @@ R_API bool r_bin_file_close(RBin *bin, int bd) {
 	return false;
 }
 
-R_API bool r_bin_file_hash(RBin *bin, ut64 limit, const char *file) {
+R_API bool r_bin_file_hash(RBin *bin, ut64 limit, const char *file, RList/*<RBinFileHash>*/ **old_file_hashes) {
 	r_return_val_if_fail (bin, false);
 
-	char hash[128], *p;
+	char hash[128];
 	RHash *ctx;
 	ut64 buf_len = 0, r = 0;
 	RBinFile *bf = bin->cur;
@@ -884,6 +882,17 @@ R_API bool r_bin_file_hash(RBin *bin, ut64 limit, const char *file) {
 		eprintf ("Cannot allocate computation buffer\n");
 		return false;
 	}
+	if (old_file_hashes) {
+		*old_file_hashes = NULL;
+	}
+	if (!r_list_empty (o->info->file_hashes)) {
+		if (old_file_hashes && o->info->file_hashes) {
+			*old_file_hashes = o->info->file_hashes;
+		} else {
+			r_list_free (o->info->file_hashes);
+		}
+		o->info->file_hashes = NULL;
+	}
 	ctx = r_hash_new (false, R_HASH_MD5 | R_HASH_SHA1);
 	while (r + blocksize < buf_len) {
 		r_io_desc_seek (iod, r, R_IO_SEEK_SET);
@@ -904,18 +913,26 @@ R_API bool r_bin_file_hash(RBin *bin, ut64 limit, const char *file) {
 		}
 	}
 	r_hash_do_end (ctx, R_HASH_MD5);
-	p = hash;
-	r_hex_bin2str (ctx->digest, R_HASH_SIZE_MD5, p);
-	RStrBuf *sbuf = r_strbuf_new ("");
-	r_strbuf_appendf (sbuf, "md5 %s", hash);
+	r_hex_bin2str (ctx->digest, R_HASH_SIZE_MD5, hash);
 
+	o->info->file_hashes = r_list_newf ((RListFree) r_bin_file_hash_free);
+	RBinFileHash *md5h = R_NEW0 (RBinFileHash);
+	if (md5h) {
+		md5h->type = strdup ("md5");
+		md5h->hex = strdup (hash);
+		r_list_push (o->info->file_hashes, md5h);
+	}
 	r_hash_do_end (ctx, R_HASH_SHA1);
-	p = hash;
-	r_hex_bin2str (ctx->digest, R_HASH_SIZE_SHA1, p);
-	r_strbuf_appendf (sbuf, "\nsha1 %s", hash);
+	r_hex_bin2str (ctx->digest, R_HASH_SIZE_SHA1, hash);
+
+	RBinFileHash *sha1h = R_NEW0 (RBinFileHash);
+	if (sha1h) {
+		sha1h->type = strdup ("sha1");
+		sha1h->hex = strdup (hash);
+		r_list_push (o->info->file_hashes, sha1h);
+	}
 	// TODO: add here more rows
 
-	o->info->hashes = r_strbuf_drain (sbuf);
 	free (buf);
 	r_hash_free (ctx);
 	return true;

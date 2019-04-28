@@ -83,41 +83,12 @@ static Sdb* get_sdb(RBinFile *bf) {
 	return NULL;
 }
 
-static void * load_buffer(RBinFile *bf, RBuffer *buf, ut64 loadaddr, Sdb *sdb) {
-	if (!buf) {
-		return NULL;
-	}
+static void *load_buffer(RBinFile *bf, RBuffer *buf, ut64 loadaddr, Sdb *sdb) {
 	struct Elf_(r_bin_elf_obj_t) *res = Elf_(r_bin_elf_new_buf) (buf, bf->rbin->verbose);
 	if (res) {
 		sdb_ns_set (sdb, "info", res->kv);
 	}
 	return res;
-}
-
-static bool load_bytes(RBinFile *bf, void **bin_obj, const ut8 *buf, ut64 sz, ut64 loadaddr, Sdb *sdb) {
-	struct Elf_(r_bin_elf_obj_t) *res;
-	if (!buf || !sz || sz == UT64_MAX) {
-		return false;
-	}
-	RBuffer *tbuf = r_buf_new ();
-	// NOOOEES must use io!
-	r_buf_set_bytes (tbuf, buf, sz);
-	res = Elf_(r_bin_elf_new_buf) (tbuf, bf->rbin->verbose);
-	if (res) {
-		sdb_ns_set (sdb, "info", res->kv);
-	}
-	r_buf_free (tbuf);
-	*bin_obj = res;
-	return true;
-}
-
-static bool load(RBinFile *bf) {
-	const ut8 *bytes = bf ? r_buf_buffer (bf->buf) : NULL;
-	ut64 sz = bf ? r_buf_size (bf->buf): 0;
-	if (!bf || !bf->o) {
-		return false;
-	}
-	return load_bytes (bf, &bf->o->bin_obj, bytes, sz, bf->o->loadaddr, bf->sdb);
 }
 
 static int destroy(RBinFile *bf) {
@@ -1101,6 +1072,7 @@ static RBinInfo* info(RBinFile *bf) {
 	ret->has_va = Elf_(r_bin_elf_has_va) (obj);
 	ret->has_nx = Elf_(r_bin_elf_has_nx) (obj);
 	ret->intrp = Elf_(r_bin_elf_intrp) (obj);
+	ret->compiler = Elf_(r_bin_elf_compiler) (obj);
 	ret->dbg_info = 0;
 	if (!Elf_(r_bin_elf_get_stripped) (obj)) {
 		ret->dbg_info |= R_BIN_DBG_LINENUMS | R_BIN_DBG_SYMS | R_BIN_DBG_RELOCS;
@@ -1116,58 +1088,39 @@ static RBinInfo* info(RBinFile *bf) {
 }
 
 static RList* fields(RBinFile *bf) {
-	int left = 0;
-	RList *ret = NULL;
-	const ut8 *buf = NULL;
-
-	if (!(ret = r_list_new ())) {
+	RList *ret = r_list_newf ((RListFree)free);
+	if (!ret) {
 		return NULL;
 	}
-	ret->free = free;
 
-	if (!(buf = r_buf_get_at (bf->buf, 0, &left))) {
-		RBinField *ptr = NULL;
-		struct r_bin_elf_field_t *field = NULL;
-		int i;
-
-		if (!(field = Elf_(r_bin_elf_get_fields) (bf->o->bin_obj))) {
+	#define ROW(nam, siz, val, fmt) \
+		r_list_append (ret, r_bin_field_new (addr, addr, siz, nam, sdb_fmt ("0x%08x", val), fmt));
+	if (r_buf_size (bf->buf) < sizeof (Elf_ (Ehdr))) {
 		return ret;
-		}
-		for (i = 0; !field[i].last; i++) {
-			if (!(ptr = R_NEW0 (RBinField))) {
-				break;
-			}
-			ptr->name = strdup (field[i].name);
-			ptr->comment = NULL;
-			ptr->vaddr = field[i].offset;
-			ptr->paddr = field[i].offset;
-			r_list_append (ret, ptr);
-		}
-		free (field);
-
-	} else {
-		#define ROW(nam,siz,val,fmt) \
-			r_list_append (ret, r_bin_field_new (addr, addr, siz, nam, sdb_fmt ("0x%08x", val), fmt));
-		if (left < sizeof (Elf_(Ehdr))) {
-			return ret;
-		}
-		ut64 addr = 0;
-		ROW ("ELF", 4, r_read_le32 (buf), "x"); addr+=0x10;
-		ROW ("Type", 2, r_read_le16 (buf + addr), "x"); addr+=0x2;
-		ROW ("Machine", 2, r_read_le16 (buf + addr), "x"); addr+=0x2;
-		ROW ("Version", 4, r_read_le32 (buf + addr), "x"); addr+=0x4;
-
-		if (r_read_le8 (buf + 0x04) == 1) {
-			ROW ("Entry point", 4, r_read_le32 (buf + addr), "x"); addr+=0x4;
-			ROW ("PhOff", 4, r_read_le32 (buf + addr), "x"); addr+=0x4;
-			ROW ("ShOff", 4, r_read_le32 (buf + addr), "x");
-		} else {
-			ROW ("Entry point", 8, r_read_le64 (buf + addr), "x"); addr+=0x8;
-			ROW ("PhOff", 8, r_read_le64 (buf + addr), "x"); addr+=0x8;
-			ROW ("ShOff", 8, r_read_le64 (buf + addr), "x");
-		}
 	}
+	ut64 addr = 0;
+	ROW ("ELF", 4, r_buf_read_le32_at (bf->buf, addr), "x");
+	addr += 0x10;
+	ROW ("Type", 2, r_buf_read_le16_at (bf->buf, addr), "x");
+	addr += 0x2;
+	ROW ("Machine", 2, r_buf_read_le16_at (bf->buf, addr), "x");
+	addr += 0x2;
+	ROW ("Version", 4, r_buf_read_le32_at (bf->buf, addr), "x");
+	addr += 0x4;
 
+	if (r_buf_read8_at (bf->buf, 0x04) == 1) {
+		ROW ("Entry point", 4, r_buf_read_le32_at (bf->buf, addr), "x");
+		addr += 0x4;
+		ROW ("PhOff", 4, r_buf_read_le32_at (bf->buf, addr), "x");
+		addr += 0x4;
+		ROW ("ShOff", 4, r_buf_read_le32_at (bf->buf, addr), "x");
+	} else {
+		ROW ("Entry point", 8, r_buf_read_le64_at (bf->buf, addr), "x");
+		addr += 0x8;
+		ROW ("PhOff", 8, r_buf_read_le64_at (bf->buf, addr), "x");
+		addr += 0x8;
+		ROW ("ShOff", 8, r_buf_read_le64_at (bf->buf, addr), "x");
+	}
 	return ret;
 }
 

@@ -104,7 +104,6 @@ platform_deps = []
 platform_inc = ['.', 'libr/include']
 if host_machine.system() == 'windows'
   platform_deps = [cc.find_library('ws2_32')]
-  platform_inc += ['libr/include/msvc']
 endif
 platform_inc = include_directories(platform_inc)
 
@@ -196,7 +195,7 @@ else
   r2_bindings = join_paths(r2_libdir, 'radare2-bindings', r2_version)
 endif
 
-r2_zsh_compdir = join_paths(r2_datdir, 'zsh', 'vendor-completions')
+r2_zsh_compdir = join_paths(r2_datdir, 'zsh', 'site-functions')
 
 # load plugin configuration
 subdir('libr')

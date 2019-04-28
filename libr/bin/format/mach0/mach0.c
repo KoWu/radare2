@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2010-2018 - nibble, pancake */
+/* radare - LGPL - Copyright 2010-2019 - nibble, pancake */
 
 #include <stdio.h>
 #include <r_types.h>
@@ -6,7 +6,9 @@
 #include "mach0.h"
 #include <r_hash.h>
 
+// TODO: deprecate bprintf and use Eprintf (bin->self)
 #define bprintf if (bin->verbose) eprintf
+#define Eprintf if (mo->verbose) eprintf
 
 typedef struct _ulebr {
 	ut8 *p;
@@ -305,83 +307,82 @@ static int parse_segments(struct MACH0_(obj_t) *bin, ut64 off) {
 	return true;
 }
 
-static int parse_symtab(struct MACH0_(obj_t) *bin, ut64 off) {
+#define Error(x) errorMessage = x; goto error;
+static int parse_symtab(struct MACH0_(obj_t) *mo, ut64 off) {
 	struct symtab_command st;
 	ut32 size_sym;
 	int i;
+	const char *errorMessage = "";
 	ut8 symt[sizeof (struct symtab_command)] = {0};
 	ut8 nlst[sizeof (struct MACH0_(nlist))] = {0};
+	const bool be = mo->big_endian;
 
-	if (off > (ut64)bin->size || off + sizeof (struct symtab_command) > (ut64)bin->size) {
+	if (off > (ut64)mo->size || off + sizeof (struct symtab_command) > (ut64)mo->size) {
 		return false;
 	}
-	int len = r_buf_read_at (bin->b, off, symt, sizeof (struct symtab_command));
+	int len = r_buf_read_at (mo->b, off, symt, sizeof (struct symtab_command));
 	if (len != sizeof (struct symtab_command)) {
-		bprintf ("Error: read (symtab)\n");
+		Eprintf ("Error: read (symtab)\n");
 		return false;
 	}
-	st.cmd = r_read_ble32 (&symt[0], bin->big_endian);
-	st.cmdsize = r_read_ble32 (&symt[4], bin->big_endian);
-	st.symoff = r_read_ble32 (&symt[8], bin->big_endian);
-	st.nsyms = r_read_ble32 (&symt[12], bin->big_endian);
-	st.stroff = r_read_ble32 (&symt[16], bin->big_endian);
-	st.strsize = r_read_ble32 (&symt[20], bin->big_endian);
+	st.cmd = r_read_ble32 (&symt[0], be);
+	st.cmdsize = r_read_ble32 (&symt[4], be);
+	st.symoff = r_read_ble32 (&symt[8], be);
+	st.nsyms = r_read_ble32 (&symt[12], be);
+	st.stroff = r_read_ble32 (&symt[16], be);
+	st.strsize = r_read_ble32 (&symt[20], be);
 
-	bin->symtab = NULL;
-	bin->nsymtab = 0;
-	if (st.strsize > 0 && st.strsize < bin->size && st.nsyms > 0) {
-		bin->nsymtab = st.nsyms;
-		if (st.stroff > bin->size || st.stroff + st.strsize > bin->size) {
-			return false;
+	mo->symtab = NULL;
+	mo->nsymtab = 0;
+	if (st.strsize > 0 && st.strsize < mo->size && st.nsyms > 0) {
+		mo->nsymtab = st.nsyms;
+		if (st.stroff > mo->size || st.stroff + st.strsize > mo->size) {
+			Error ("fail");
 		}
-		if (!UT32_MUL (&size_sym, bin->nsymtab, sizeof (struct MACH0_(nlist)))) {
-			bprintf("fail2\n");
-			return false;
+		if (!UT32_MUL (&size_sym, mo->nsymtab, sizeof (struct MACH0_(nlist)))) {
+			Error ("fail2");
 		}
 		if (!size_sym) {
-			bprintf("fail3\n");
-			return false;
+			Error ("symbol size is zero");
 		}
-		if (st.symoff > bin->size || st.symoff + size_sym > bin->size) {
-			bprintf("fail4\n");
-			return false;
+		if (st.symoff > mo->size || st.symoff + size_sym > mo->size) {
+			Error ("symoff is out of bounds");
 		}
-		if (!(bin->symstr = calloc (1, st.strsize + 2))) {
-			perror ("calloc (symstr)");
-			return false;
+		if (!(mo->symstr = calloc (1, st.strsize + 2))) {
+			Error ("symoff is out of bounds");
 		}
-		bin->symstrlen = st.strsize;
-		len = r_buf_read_at (bin->b, st.stroff, (ut8*)bin->symstr, st.strsize);
+		mo->symstrlen = st.strsize;
+		len = r_buf_read_at (mo->b, st.stroff, (ut8*)mo->symstr, st.strsize);
 		if (len != st.strsize) {
-			bprintf ("Error: read (symstr)\n");
-			R_FREE (bin->symstr);
-			return false;
+			Error ("Error: read (symstr)");
 		}
-		if (!(bin->symtab = calloc (bin->nsymtab, sizeof (struct MACH0_(nlist))))) {
-			perror ("calloc (symtab)");
-			return false;
+		if (!(mo->symtab = calloc (mo->nsymtab, sizeof (struct MACH0_(nlist))))) {
+			goto error;
 		}
-		for (i = 0; i < bin->nsymtab; i++) {
-			len = r_buf_read_at (bin->b, st.symoff + (i * sizeof (struct MACH0_(nlist))),
+		for (i = 0; i < mo->nsymtab; i++) {
+			len = r_buf_read_at (mo->b, st.symoff + (i * sizeof (struct MACH0_(nlist))),
 								nlst, sizeof (struct MACH0_(nlist)));
 			if (len != sizeof (struct MACH0_(nlist))) {
-				bprintf ("Error: read (nlist)\n");
-				R_FREE (bin->symtab);
-				return false;
+				Error ("read (nlist)");
 			}
 			//XXX not very safe what if is n_un.n_name instead?
-			bin->symtab[i].n_strx = r_read_ble32 (&nlst[0], bin->big_endian);
-			bin->symtab[i].n_type = r_read_ble8 (&nlst[4]);
-			bin->symtab[i].n_sect = r_read_ble8 (&nlst[5]);
-			bin->symtab[i].n_desc = r_read_ble16 (&nlst[6], bin->big_endian);
+			mo->symtab[i].n_strx = r_read_ble32 (&nlst[0], be);
+			mo->symtab[i].n_type = r_read_ble8 (&nlst[4]);
+			mo->symtab[i].n_sect = r_read_ble8 (&nlst[5]);
+			mo->symtab[i].n_desc = r_read_ble16 (&nlst[6], be);
 #if R_BIN_MACH064
-			bin->symtab[i].n_value = r_read_ble64 (&nlst[8], bin->big_endian);
+			mo->symtab[i].n_value = r_read_ble64 (&nlst[8], be);
 #else
-			bin->symtab[i].n_value = r_read_ble32 (&nlst[8], bin->big_endian);
+			mo->symtab[i].n_value = r_read_ble32 (&nlst[8], be);
 #endif
 		}
 	}
 	return true;
+error:
+	R_FREE (mo->symstr);
+	R_FREE (mo->symtab);
+	Eprintf ("%s\n", errorMessage);
+	return false;
 }
 
 static int parse_dysymtab(struct MACH0_(obj_t) *bin, ut64 off) {
@@ -522,7 +523,6 @@ static int parse_dysymtab(struct MACH0_(obj_t) *bin, ut64 off) {
 			R_FREE (bin->indirectsyms);
 			return false;
 		}
-
 		for (i = 0; i < bin->nindirectsyms; i++) {
 			len = r_buf_read_at (bin->b, bin->dysymtab.indirectsymoff + i * sizeof (ut32), idsyms, 4);
 			if (len == -1) {
@@ -713,9 +713,9 @@ static bool parse_signature(struct MACH0_(obj_t) *bin, ut64 off) {
 		bin->signature = (ut8 *)strdup ("Malformed entitlement");
 		return true;
 	}
-	super.blob.magic = r_read_ble32 (bin->b->buf + data, mach0_endian);
-	super.blob.length = r_read_ble32 (bin->b->buf + data + 4, mach0_endian);
-	super.count = r_read_ble32 (bin->b->buf + data + 8, mach0_endian);
+	super.blob.magic = r_buf_read_ble32_at (bin->b, data, mach0_endian);
+	super.blob.length = r_buf_read_ble32_at (bin->b, data + 4, mach0_endian);
+	super.count = r_buf_read_ble32_at (bin->b, data + 8, mach0_endian);
 	char *verbose = r_sys_getenv ("RABIN2_CODESIGN_VERBOSE");
 	bool isVerbose = false;
 	if (verbose) {
@@ -728,7 +728,7 @@ static bool parse_signature(struct MACH0_(obj_t) *bin, ut64 off) {
 	// $ openssl asn1parse -inform der -in a|less
 	// $ openssl pkcs7 -inform DER -print_certs -text -in a
 	for (i = 0; i < super.count; i++) {
-		if ((ut8 *)(bin->b->buf + data + i) > (ut8 *)(bin->b->buf + bin->size)) {
+		if (data + i > bin->size) {
 			bin->signature = (ut8 *)strdup ("Malformed entitlement");
 			break;
 		}
@@ -748,18 +748,19 @@ static bool parse_signature(struct MACH0_(obj_t) *bin, ut64 off) {
 				break;
 			}
 			struct blob_t entitlements = {0};
-			entitlements.magic = r_read_ble32 (bin->b->buf + off, mach0_endian);
-			entitlements.length = r_read_ble32 (bin->b->buf + off + 4, mach0_endian);
+			entitlements.magic = r_buf_read_ble32_at (bin->b, off, mach0_endian);
+			entitlements.length = r_buf_read_ble32_at (bin->b, off + 4, mach0_endian);
 			len = entitlements.length - sizeof (struct blob_t);
 			if (len <= bin->size && len > 1) {
 				bin->signature = calloc (1, len + 1);
 				if (!bin->signature) {
 					break;
 				}
-				ut8 *src = bin->b->buf + off + sizeof (struct blob_t);
-				if (off + sizeof (struct blob_t) + len < bin->b->length) {
-					memcpy (bin->signature, src, len);
-					bin->signature[len] = '\0';
+				if (off + sizeof (struct blob_t) + len < r_buf_size (bin->b)) {
+					r_buf_read_at (bin->b, off + sizeof (struct blob_t), (ut8 *)bin->signature, len);
+					if (len >= 0) {
+						bin->signature[len] = '\0';
+					}
 				} else {
 					bin->signature = (ut8 *)strdup ("Malformed entitlement");
 				}
@@ -1108,8 +1109,6 @@ static const char *cmd_to_string(ut32 cmd) {
 		return "LC_SYMTAB";
 	case LC_SYMSEG:
 		return "LC_SYMSEG";
-	case LC_ID_DYLIB:
-		return "LC_ID_DYLIB";
 	case LC_DYSYMTAB:
 		return "LC_DYSYMTAB";
 	case LC_PREBOUND_DYLIB:
@@ -1154,6 +1153,10 @@ static const char *cmd_to_string(ut32 cmd) {
 		return "LC_MAIN";
 	case LC_UUID:
 		return "LC_UUID";
+	case LC_ID_DYLIB:
+		return "LC_ID_DYLIB";
+	case LC_ID_DYLINKER:
+		return "LC_ID_DYLINKER";
 	case LC_LAZY_LOAD_DYLIB:
 		return "LC_LAZY_LOAD_DYLIB";
 	case LC_ENCRYPTION_INFO:
@@ -1261,7 +1264,7 @@ static int init_items(struct MACH0_(obj_t) *bin) {
 			break;
 		case LC_DYSYMTAB:
 			sdb_set (bin->kv, sdb_fmt ("mach0_cmd_%d.cmd", i), "dysymtab", 0);
-			if (!parse_dysymtab(bin, off)) {
+			if (!parse_dysymtab (bin, off)) {
 				bprintf ("error parsing dysymtab\n");
 				return false;
 			}
@@ -1295,7 +1298,7 @@ static int init_items(struct MACH0_(obj_t) *bin) {
 			{
 			struct uuid_command uc = {0};
 			if (off + sizeof (struct uuid_command) > bin->size) {
-				bprintf ("UUID out of obunds\n");
+				bprintf ("UUID out of bounds\n");
 				return false;
 			}
 			if (r_buf_fread_at (bin->b, off, (ut8*)&uc, "24c", 1) != -1) {
@@ -1374,7 +1377,7 @@ static int init_items(struct MACH0_(obj_t) *bin) {
 			sdb_set (bin->kv, sdb_fmt ("mach0_cmd_%d.cmd", i), "main", 0);
 
 			if (!is_first_thread) {
-				bprintf("Error: LC_MAIN with other threads\n");
+				bprintf ("Error: LC_MAIN with other threads\n");
 				return false;
 			}
 			if (off + 8 > bin->size || off + sizeof (ep) > bin->size) {
@@ -1484,15 +1487,15 @@ static int init_items(struct MACH0_(obj_t) *bin) {
 	return true;
 }
 
-static int init(struct MACH0_(obj_t) *bin) {
-	if (!init_hdr (bin)) {
-		bprintf ("Warning: File is not MACH0\n");
+static int init(struct MACH0_(obj_t) *mo) {
+	if (!init_hdr (mo)) {
+		Eprintf ("Warning: File is not MACH0\n");
 		return false;
 	}
-	if (!init_items (bin)) {
-		bprintf ("Warning: Cannot initialize items\n");
+	if (!init_items (mo)) {
+		Eprintf ("Warning: Cannot initialize items\n");
 	}
-	bin->baddr = MACH0_(get_baddr)(bin);
+	mo->baddr = MACH0_(get_baddr)(mo);
 	return true;
 }
 
@@ -1515,8 +1518,9 @@ void *MACH0_(mach0_free)(struct MACH0_(obj_t) *mo) {
 	free (mo->libs);
 	free (mo->func_start);
 	free (mo->signature);
-	// this is freed in bfile.c:792
-	// r_buf_free (mo->b);
+	free (mo->intrp);
+	free (mo->compiler);
+	r_buf_free (mo->b);
 	free (mo);
 	return NULL;
 }
@@ -2066,7 +2070,7 @@ RSkipList *MACH0_(get_relocs)(struct MACH0_(obj_t) *bin) {
 		if (bin->dyld_info->bind_off+bind_size+lazy_size > bin->size) {
 			return NULL;
 		}
-		int amount = bind_size + lazy_size + weak_size;
+		ut64 amount = bind_size + lazy_size + weak_size;
 		if (amount < 0) {
 			return NULL;
 		}
@@ -2749,10 +2753,26 @@ void MACH0_(mach_headerfields)(RBinFile *file) {
 #endif
 			}
 			break;
-		case LC_ID_DYLIB: // install_name_tool
-			cb_printf ("0x%08"PFMT64x"  id           %s\n",
-				addr + 20, r_buf_get_at (buf, addr + 20, NULL));
+		case LC_SYMTAB:
+#if 0
+			{
+			char *id = r_buf_get_string (buf, addr + 20);
+			cb_printf ("0x%08"PFMT64x"  id         0x%x\n", addr + 20, id? id: "");
+			cb_printf ("0x%08"PFMT64x"  symooff    0x%x\n", addr + 20, id? id: "");
+			cb_printf ("0x%08"PFMT64x"  nsyms      %d\n", addr + 20, id? id: "");
+			cb_printf ("0x%08"PFMT64x"  stroff     0x%x\n", addr + 20, id? id: "");
+			cb_printf ("0x%08"PFMT64x"  strsize    0x%x\n", addr + 20, id? id: "");
+			free (id);
+			}
+#endif
 			break;
+		case LC_ID_DYLIB: { // install_name_tool
+			char *id = r_buf_get_string (buf, addr + 20);
+			cb_printf ("0x%08"PFMT64x"  id           %s\n",
+				addr + 20, id? id: "");
+			free (id);
+			break;
+		}
 		case LC_UUID:
 			{
 				ut8 i, uuid[16];
@@ -2764,18 +2784,34 @@ void MACH0_(mach_headerfields)(RBinFile *file) {
 				cb_printf ("\n");
 			}
 			break;
+		case LC_SEGMENT:
+		case LC_SEGMENT_64:
+			cb_printf ("pf.mach0_segment @ 0x%08"PFMT64x"\n", addr - 8);
+			{
+				ut8 name[17] = {0};
+				r_buf_read_at (buf, addr, name, sizeof (name) - 1);
+				cb_printf ("0x%08"PFMT64x"  name        %s\n", addr, name);
+			}
+			break;
 		case LC_LOAD_DYLIB:
-		case LC_LOAD_WEAK_DYLIB:
+		case LC_LOAD_WEAK_DYLIB: {
+			char *load_dylib = r_buf_get_string (buf, addr + 16);
 			cb_printf ("0x%08"PFMT64x"  load_dylib  %s\n",
-				addr + 16, r_buf_get_at (buf, addr + 16, NULL));
+				addr + 16, load_dylib? load_dylib: "");
+			free (load_dylib);
 			break;
-		case LC_RPATH:
-			cb_printf ("0x%08"PFMT64x"  rpath       %s\n",
-				addr + 4, r_buf_get_at (buf, addr + 4, NULL));
+		}
+		case LC_RPATH: {
+			char *rpath = r_buf_get_string (buf, addr + 4);
+			cb_printf ("0x%08" PFMT64x "  rpath       %s\n",
+				addr + 4, rpath ? rpath : "");
+			free (rpath);
 			break;
+		}
 		case LC_CODE_SIGNATURE:
 			{
-			ut32 *words = (ut32*)r_buf_get_at (buf, addr, NULL);
+			ut32 words[2];
+			r_buf_read_at (buf, addr, (ut8 *)words, sizeof (words));
 			cb_printf ("0x%08"PFMT64x"  dataoff     0x%08x\n", addr, words[0]);
 			cb_printf ("0x%08"PFMT64x"  datasize    %d\n", addr + 4, words[1]);
 			cb_printf ("# wtf mach0.sign %d @ 0x%x\n", words[1], words[0]);
@@ -2803,12 +2839,12 @@ RList *MACH0_(mach_fields)(RBinFile *bf) {
 #define ROW(nam,siz,val,fmt) \
 	r_list_append (ret, r_bin_field_new (addr, addr, siz, nam, sdb_fmt ("0x%08x", val), fmt)); \
 	addr += 4;
-	ROW ("hdr.magic", 4, mh->magic, "x");
-	ROW ("hdr.cputype", 4, mh->cputype, "x");
-	ROW ("hdr.cpusubtype", 4, mh->cpusubtype, "x");
-	ROW ("hdr.filetype", 4, mh->filetype, "x");
-	ROW ("hdr.nbcmds", 4, mh->ncmds, "x");
-	ROW ("hdr.sizeofcmds", 4, mh->sizeofcmds, "x");
+	ROW ("macho_magic", 4, mh->magic, "x");
+	ROW ("macho_cputype", 4, mh->cputype, "x");
+	ROW ("macho_cpusubtype", 4, mh->cpusubtype, "x");
+	ROW ("macho_filetype", 4, mh->filetype, "x");
+	ROW ("macho_nbcmds", 4, mh->ncmds, "x");
+	ROW ("macho_sizeofcmds", 4, mh->sizeofcmds, "x");
 	free (mh);
 	return ret;
 }

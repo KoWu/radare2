@@ -28,16 +28,16 @@ typedef struct r_parse_t {
 	bool tailsub; // replace any immediate relative to current address with .. prefix syntax
 	bool localvar_only; // if true use only the local variable name (e.g. [local_10h] instead of [ebp + local10h])
 	ut64 relsub_addr;
+	int maxflagnamelen;
 	int minval;
 	char *retleave_asm;
 	struct r_parse_plugin_t *cur;
-	RAnal *anal; // weak anal ref
-	RAnalHint *hint; // weak anal ref
+	// RAnal *anal; // weak anal ref XXX do not use. use analb.anal
 	RList *parsers;
 	RAnalVarList varlist;
 	char* (*get_op_ireg)(void *user, ut64 addr);
 	RAnalBind analb;
-	RFlagGetAtAddr flag_get;
+	RFlagGetAtAddr flag_get; // XXX
 } RParse;
 
 typedef struct r_parse_plugin_t {
@@ -61,7 +61,7 @@ R_API int r_parse_list(RParse *p);
 R_API int r_parse_use(RParse *p, const char *name);
 R_API int r_parse_parse(RParse *p, const char *data, char *str);
 R_API int r_parse_assemble(RParse *p, char *data, char *str);
-R_API int r_parse_filter(RParse *p, ut64 addr, RFlag *f, char *data, char *str, int len, bool big_endian);
+R_API int r_parse_filter(RParse *p, ut64 addr, RFlag *f, RAnalHint *hint, char *data, char *str, int len, bool big_endian);
 R_API bool r_parse_varsub(RParse *p, RAnalFunction *f, ut64 addr, int oplen, char *data, char *str, int len);
 R_API char *r_parse_c_string(RAnal *anal, const char *code, char **error_msg);
 R_API char *r_parse_c_file(RAnal *anal, const char *path, char **error_msg);
@@ -74,6 +74,7 @@ extern RParsePlugin r_parse_plugin_6502_pseudo;
 extern RParsePlugin r_parse_plugin_arm_pseudo;
 extern RParsePlugin r_parse_plugin_att2intel;
 extern RParsePlugin r_parse_plugin_avr_pseudo;
+extern RParsePlugin r_parse_plugin_chip8_pseudo;
 extern RParsePlugin r_parse_plugin_dalvik_pseudo;
 extern RParsePlugin r_parse_plugin_dummy;
 extern RParsePlugin r_parse_plugin_m68k_pseudo;

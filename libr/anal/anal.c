@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2018 - pancake, nibble */
+/* radare - LGPL - Copyright 2009-2019 - pancake, nibble */
 
 #include <r_anal.h>
 #include <r_util.h>
@@ -155,12 +155,11 @@ R_API RAnal *r_anal_new() {
 		return NULL;
 	}
 	anal->os = strdup (R_SYS_OS);
-	anal->reflines = anal->reflines2 = NULL;
+	anal->reflines = NULL;
 	anal->esil_goto_limit = R_ANAL_ESIL_GOTO_LIMIT;
 	anal->limit = NULL;
 	anal->opt.nopskip = true; // skip nops in code analysis
 	anal->opt.hpskip = false; // skip `mov reg,reg` and `lea reg,[reg]`
-	anal->decode = true; // slow slow if not used
 	anal->gp = 0LL;
 	anal->sdb = sdb_new0 ();
 	anal->cpp_abi = R_ANAL_CPP_ABI_ITANIUM;
@@ -630,14 +629,6 @@ R_API bool r_anal_noreturn_add(RAnal *anal, const char *name, ut64 addr) {
 	return true;
 }
 
-static int is_func(void *p, const char *k, const char *v) {
-	if (!strstr (k, "noreturn")) {
-		return 0;
-	}
-	// eprintf ("FILTER (%s) %s\n", k, v);
-	return !strcmp (v, "func") || !strcmp (v, "addr");
-}
-
 R_API int r_anal_noreturn_drop(RAnal *anal, const char *expr) {
 	Sdb *TDB = anal->sdb_types;
 	expr = r_str_trim_ro (expr);
@@ -823,5 +814,6 @@ R_API void r_anal_bind(RAnal *anal, RAnalBind *b) {
 	if (b) {
 		b->anal = anal;
 		b->get_fcn_in = r_anal_get_fcn_in;
+		b->get_hint = r_anal_hint_get;
 	}
 }

@@ -27,6 +27,7 @@ static const char *help_msg_slash[] = {
 	"/c", " jmp [esp]", "search for asm code matching the given string",
 	"/ce", "[j] rsp,rbp", "search for esil expressions matching",
 	"/ci", "[j] 0x300", "find all the instructions using that immediate",
+	"/ci", "[j] 0x300 0x500", "find all the instructions using an immediate",
 	"/C", "[ar]", "search for crypto materials",
 	"/d", " 101112", "search for a deltified sequence of bytes",
 	"/e", " /E.F/i", "match regular expression",
@@ -89,8 +90,8 @@ static const char *help_msg_slash_a[] = {
 	"/ai", "", "Search for infinite loop instructions (jmp $$)",
 	"/at", " type", "Search for instructions of given type",
 	"/af", " family", "Search for instruction of specific family",
+	"/am", " opcode", "Search for specific instructions of specific mnemonic",
 	"/as", "", "Search for syscalls (See /at swi and /af priv)",
-
 	"/al", "", "Same as aoml, list all opcodes",
 	"/asl", "", "Same as asl, list all syscalls",
 	"/atl", "", "List all instruction types",
@@ -326,6 +327,10 @@ R_API int r_core_search_prelude(RCore *core, ut64 from, ut64 to, const ut8 *buf,
 			break;
 		}
 	}
+	// r_search_reset might also benifet from having an if(s->data) R_FREE(s->data), but im not sure.
+	//add a commit that puts it in there to this PR if it wouldnt break anything. (dont have to worry about this happening again, since all searches start by resetting core->search)
+	//For now we will just use r_search_kw_reset
+	r_search_kw_reset (core->search);
 	free (b);
 	return preludecnt;
 }
@@ -334,7 +339,7 @@ static int count_functions(RCore *core) {
 	return r_list_length (core->anal->fcns);
 }
 
-R_API int r_core_search_preludes(RCore *core) {
+R_API int r_core_search_preludes(RCore *core, bool log) {
 	int ret = -1;
 	const char *prelude = r_config_get (core->config, "anal.prelude");
 	const char *arch = r_config_get (core->config, "asm.arch");
@@ -353,11 +358,13 @@ R_API int r_core_search_preludes(RCore *core) {
 
 	int fc0 = count_functions (core);
 	r_list_foreach (list, iter, p) {
-		eprintf ("\r[>] Scanning %s 0x%"PFMT64x " - 0x%"PFMT64x " ",
-			r_str_rwx_i (p->perm), p->itv.addr, r_itv_end (p->itv));
-		if (!(p->perm & R_PERM_X)) {
-			eprintf ("skip\n");
-			continue;
+		if (log) {
+			eprintf ("\r[>] Scanning %s 0x%"PFMT64x " - 0x%"PFMT64x " ",
+				r_str_rwx_i (p->perm), p->itv.addr, r_itv_end (p->itv));
+			if (!(p->perm & R_PERM_X)) {
+				eprintf ("skip\n");
+				continue;
+			}
 		}
 		from = p->itv.addr;
 		to = r_itv_end (p->itv);
@@ -387,7 +394,9 @@ R_API int r_core_search_preludes(RCore *core) {
 				r_core_search_prelude (core, from, to, (const ut8 *) "\xf0\x00\x00\xa9", 4, (const ut8*)"\xf0\x00\x00\xff", 4);
 				break;
 			default:
-				eprintf ("ap: Unsupported bits: %d\n", bits);
+				if (log) {
+					eprintf ("ap: Unsupported bits: %d\n", bits);
+				}
 			}
 		} else if (strstr (arch, "mips")) {
 			ret = r_core_search_prelude (core, from, to,
@@ -409,18 +418,26 @@ R_API int r_core_search_preludes(RCore *core) {
 					(const ut8 *) "\x55\x48\x8b\xec", 4, NULL, 0);
 				break;
 			default:
-				eprintf ("ap: Unsupported bits: %d\n", bits);
+				if (log) {
+					eprintf ("ap: Unsupported bits: %d\n", bits);
+				}
 			}
 		} else {
-			eprintf ("ap: Unsupported asm.arch and asm.bits\n");
+			if (log) {
+				eprintf ("ap: Unsupported asm.arch and asm.bits\n");
+			}
 		}
-		eprintf ("done\n");
+		if (log) {
+			eprintf ("done\n");
+		}
 	}
 	int fc1 = count_functions (core);
-	if (list) {
-		eprintf ("Analyzed %d functions based on preludes\n", fc1 - fc0);
-	} else {
-		eprintf ("No executable section found, cannot analyze anything. Use 'S' to change or define permissions of sections\n");
+	if (log) {
+		if (list) {
+			eprintf ("Analyzed %d functions based on preludes\n", fc1 - fc0);
+		} else {
+			eprintf ("No executable section found, cannot analyze anything. Use 'S' to change or define permissions of sections\n");
+		}
 	}
 	r_list_free (list);
 	return ret;
@@ -701,8 +718,24 @@ R_API RList *r_core_get_boundaries_prot(RCore *core, int perm, const char *mode,
 	} else if (r_str_startswith (mode, "io.maps.")) {
 		int len = strlen ("io.maps.");
 		int mask = (mode[len - 1] == '.')? r_str_rwx (mode + len): 0;
-		bool only = (bool)(size_t)strstr (mode, ".only");
+		// bool only = (bool)(size_t)strstr (mode, ".only");
 
+		SdbListIter *iter;
+		RIOMap *map;
+		ls_foreach  (core->io->maps, iter, map) {
+			ut64 from = r_itv_begin (map->itv);
+			//ut64 to = r_itv_end (map->itv);
+			int rwx = map->perm;
+			if ((rwx & mask) != mask) {
+				continue;
+			}
+			append_bound (list, core->io, search_itv, from, r_itv_size (map->itv), rwx);
+		}
+#if 0
+	} else if (r_str_startswith (mode, "bin.sections.")) {
+		int len = strlen ("bin.sections.");
+		int mask = (mode[len - 1] == '.')? r_str_rwx (mode + len): 0;
+		bool only = (bool)(size_t)strstr (mode, ".only");
 		RBinObject *obj = r_bin_cur_object (core->bin);
 		if (obj) {
 			RBinSection *s;
@@ -716,6 +749,11 @@ R_API RList *r_core_get_boundaries_prot(RCore *core, int perm, const char *mode,
 				append_bound (list, core->io, search_itv, addr, size, s->perm);
 			}
 		}
+#endif
+	} else if (r_str_startswith (mode, "io.sky.")) {
+		int len = strlen ("io.sky.");
+		int mask = (mode[len - 1] == '.')? r_str_rwx (mode + len): 0;
+		bool only = (bool)(size_t)strstr (mode, ".only");
 		const RPVector *skyline = &core->io->map_skyline;
 		ut64 begin = UT64_MAX;
 		ut64 end = UT64_MAX;
@@ -738,7 +776,7 @@ R_API RList *r_core_get_boundaries_prot(RCore *core, int perm, const char *mode,
 				if (end == from) {
 					end = to;
 				} else {
-			//		eprintf ("[%llx - %llx]\n", begin, end);
+					// eprintf ("[%llx - %llx]\n", begin, end);
 					append_bound (list, NULL, search_itv, begin, end - begin, perm);
 					begin = from;
 					end = to;
@@ -892,7 +930,6 @@ R_API RList *r_core_get_boundaries_prot(RCore *core, int perm, const char *mode,
 			}
 		}
 	} else {
-		// if (!strcmp (mode, "raw")) {
 		/* obey temporary seek if defined '/x 8080 @ addr:len' */
 		if (core->tmpseek) {
 			append_bound (list, core->io, search_itv, core->offset, core->blocksize, 5);
@@ -1847,8 +1884,10 @@ static void do_ref_search(RCore *core, ut64 addr,ut64 from, ut64 to, struct sear
 			r_asm_set_pc (core->assembler, ref->addr);
 			r_asm_disassemble (core->assembler, &asmop, buf, size);
 			fcn = r_anal_get_fcn_in (core->anal, ref->addr, 0);
-			r_parse_filter (core->parser, ref->addr, core->flags, r_strbuf_get (&asmop.buf_asm),
+			RAnalHint *hint = r_anal_hint_get (core->anal, ref->addr);
+			r_parse_filter (core->parser, ref->addr, core->flags, hint, r_strbuf_get (&asmop.buf_asm),
 				str, sizeof (str), core->print->big_endian);
+			r_anal_hint_free (hint);
 			comment = r_meta_get_string (core->anal, R_META_TYPE_COMMENT, ref->addr);
 			char *buf_fcn = comment
 				? r_str_newf ("%s; %s", fcn ?  fcn->name : "(nofunc)", strtok (comment, "\n"))
@@ -1872,13 +1911,11 @@ static void do_ref_search(RCore *core, ut64 addr,ut64 from, ut64 to, struct sear
 static bool do_anal_search(RCore *core, struct search_parameters *param, const char *input) {
 	RSearch *search = core->search;
 	ut64 at;
-	ut8 *buf;
 	RAnalOp aop;
 	int type = 0;
 	int mode = 0;
-	int i, ret, bsize = R_MIN (64, core->blocksize);
 	int kwidx = core->search->n_kws;
-	int count = 0;
+	int i, ret, count = 0;
 	bool firstItem = true;
 
 	while (*input && *input != ' ') {
@@ -1918,6 +1955,7 @@ static bool do_anal_search(RCore *core, struct search_parameters *param, const c
 		case 'f': // "/af"
 		case 's': // "/as"
 		case 't': // "/at"
+		case 'm': // "/am"
 		case ' ':
 			type = *input;
 			break;
@@ -1930,7 +1968,7 @@ static bool do_anal_search(RCore *core, struct search_parameters *param, const c
 		input++;
 	}
 	if (type == 's') {
-		eprintf ("Shouldnt reach\n");
+		eprintf ("Shouldn't reach\n");
 // ??
 #if 0
 	case 's': // "/s"
@@ -1944,39 +1982,31 @@ static bool do_anal_search(RCore *core, struct search_parameters *param, const c
 		r_cons_printf ("[");
 	}
 	input = r_str_trim_ro (input);
-	buf = malloc (bsize);
-	if (!buf) {
-		eprintf ("Cannot allocate %d byte(s)\n", bsize);
-		return false;
-	}
 	r_cons_break_push (NULL, NULL);
 	RIOMap* map;
 	RListIter *iter;
 	r_list_foreach (param->boundaries, iter, map) {
 		ut64 from = map->itv.addr;
 		ut64 to = r_itv_end (map->itv);
-		for (i = 0, at = from; at < to; at++, i++) {
+		for (i = 0, at = from; at < to; i++, at++) {
 			if (r_cons_is_breaked ()) {
 				break;
 			}
-			if (i >= (bsize - 32)) {
-				i = 0;
-			}
-			if (!i) {
-				r_io_read_at (core->io, at, buf, bsize);
-			}
-			ret = r_anal_op (core->anal, &aop, at, buf + i, bsize - i, R_ANAL_OP_MASK_BASIC);
+			at = from + i;
+			ut8 bufop[32];
+			r_io_read_at (core->io, at, bufop, sizeof(bufop));
+			ret = r_anal_op (core->anal, &aop, at, bufop, sizeof(bufop), R_ANAL_OP_MASK_BASIC | R_ANAL_OP_MASK_DISASM);
 			if (ret) {
 				bool match = false;
-				if (type == 'f') {
+				if (type == 'm') {
+					const char *fam = aop.mnemonic;
+					if (fam && (!*input || r_str_startswith (fam, input))) {
+						match = true;
+					}
+				} else if (type == 'f') {
 					const char *fam = r_anal_op_family_to_string (aop.family);
-					if (fam) {
-						if (!*input || !strcmp (input, fam)) {
-							match = true;
-							if (mode == 0) {
-								r_cons_printf ("0x%08"PFMT64x " - %d %s\n", at, ret, fam);
-							}
-						}
+					if (fam && (!*input || !strcmp (input, fam))) {
+						match = true;
 					}
 				} else {
 					const char *type = r_anal_optype_to_string (aop.type);
@@ -2017,7 +2047,12 @@ static bool do_anal_search(RCore *core, struct search_parameters *param, const c
 						r_cons_printf ("0x%08"PFMT64x "\n", at);
 						break;
 					default:
-						r_cons_printf ("0x%08"PFMT64x " %d %s\n", at, ret, opstr);
+						if (type == 'f') {
+							const char *fam = r_anal_op_family_to_string (aop.family);
+							r_cons_printf ("0x%08"PFMT64x " %d %s %s\n", at, ret, fam, opstr);
+						} else {
+							r_cons_printf ("0x%08"PFMT64x " %d %s\n", at, ret, opstr);
+						}
 						break;
 					}
 					R_FREE (opstr);
@@ -2053,7 +2088,6 @@ done:
 		r_cons_println ("]\n");
 	}
 	r_cons_break_pop ();
-	free (buf);
 	return false;
 }
 
@@ -2182,7 +2216,7 @@ static void do_asm_search(RCore *core, struct search_parameters *param, const ch
 			hits = NULL;
 		} else {
 			hits = r_core_asm_strsearch (core, end_cmd,
-				from, to, maxhits, regexp, everyByte, mode);
+					from, to, maxhits, regexp, everyByte, mode);
 		}
 		if (hits) {
 			const char *cmdhit = r_config_get (core->config, "cmd.hit");
@@ -2211,8 +2245,10 @@ static void do_asm_search(RCore *core, struct search_parameters *param, const ch
 						char tmp[128] = {
 							0
 						};
-						r_parse_filter (core->parser, hit->addr, core->flags, hit->code, tmp, sizeof (tmp),
+						RAnalHint *hint = r_anal_hint_get (core->anal, hit->addr);
+						r_parse_filter (core->parser, hit->addr, core->flags, hint, hit->code, tmp, sizeof (tmp),
 								core->print->big_endian);
+						r_anal_hint_free (hint);
 						r_cons_printf ("0x%08"PFMT64x "   # %i: %s\n",
 							hit->addr, hit->len, tmp);
 					} else {

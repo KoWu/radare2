@@ -1,6 +1,7 @@
 r_core_sources = [
   'anal_tp.c',
   'anal_objc.c',
+  'esil_data_flow.c',
   'casm.c',
   'blaze.c',
   'canal.c',
@@ -40,6 +41,7 @@ r_core_sources = [
   'cfile.c',
   'fortune.c',
   'gdiff.c',
+  'zdiff.c',
   'graph.c',
   'hack.c',
   'libs.c',
@@ -116,7 +118,7 @@ r_core_dep = declare_dependency(link_with: r_core,
                                 include_directories: r_core_inc)
 
 pkgconfig_mod.generate(
-  libraries: [r_core],
+  r_core,
   subdirs: 'libr',
   version: r2_version,
   name: 'r_core',
