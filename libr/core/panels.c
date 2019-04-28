@@ -4669,6 +4669,9 @@ repeat:
 			(void)r_core_cmd0 (core, cmd);
 		} else {
 			panelSingleStepIn (core);
+			if (!strcmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY)) {
+				cur->model->addr = core->offset;
+			}
 			setRefreshAll (panels, false);
 		}
 		break;
@@ -4678,6 +4681,9 @@ repeat:
 			(void)r_core_cmd0 (core, cmd);
 		} else {
 			panelSingleStepOver (core);
+			if (!strcmp (cur->model->cmd, PANEL_CMD_DISASSEMBLY)) {
+				cur->model->addr = core->offset;
+			}
 			setRefreshAll (panels, false);
 		}
 		break;
