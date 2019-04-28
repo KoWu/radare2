@@ -614,12 +614,12 @@ static void panelAllClear(RPanels *panels) {
 static void panels_layout (RPanels *panels) {
 	panels->can->sx = 0;
 	panels->can->sy = 0;
-	layoutDefault(panels);
+	layoutDefault (panels);
 }
 
 static void layoutDefault(RPanels *panels) {
 	int h, w = r_cons_get_size (&h);
-	int ph = (h - 1) / (panels->n_panels - 1);
+	int ph = (h - 1) / (panels->n_panels - 2);
 	int i;
 	int colpos = w - panels->columnWidth;
 	RPanel *p0 = getPanel (panels, 0);
@@ -4219,8 +4219,6 @@ static int panels_process(RCore *core, RPanels **r_panels, bool *force_quit) {
 		createDefaultPanels (core);
 		panels_layout (panels);
 	}
-
-	loadLayoutSavedCb(core);
 repeat:
 	core->panels = panels;
 	core->cons->event_resize = NULL; // avoid running old event with new data
@@ -4671,9 +4669,6 @@ repeat:
 			(void)r_core_cmd0 (core, cmd);
 		} else {
 			panelSingleStepIn (core);
-			if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)) {
-				cur->addr = core->offset;
-			}
 			setRefreshAll (panels, false);
 		}
 		break;
@@ -4683,9 +4678,6 @@ repeat:
 			(void)r_core_cmd0 (core, cmd);
 		} else {
 			panelSingleStepOver (core);
-			if (!strcmp (cur->cmd, PANEL_CMD_DISASSEMBLY)) {
-				cur->addr = core->offset;
-			}
 			setRefreshAll (panels, false);
 		}
 		break;
